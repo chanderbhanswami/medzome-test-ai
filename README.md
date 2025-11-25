@@ -2,8 +2,8 @@
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-Available-brightgreen)](https://your-demo-link.com)
-[![Responsive](https://img.shields.io/badge/Responsive-Yes-blue)](https://your-demo-link.com)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Available-brightgreen)](https://medzome.onrender.com/)
+[![Responsive](https://img.shields.io/badge/Responsive-Yes-blue)](https://medzome.onrender.com/)
 [![Backend](https://img.shields.io/badge/Backend-Flask%20%7C%20TensorFlow%20%7C%20OpenCV-orange)](https://www.tensorflow.org/)
 [![Frontend](https://img.shields.io/badge/Frontend-HTML%20%7C%20CSS%20%7C%20JS%20%7C%20Bootstrap-blueviolet)](https://getbootstrap.com/)
 [![GitHub stars](https://img.shields.io/github/stars/chanderbhanswami/fence-staining-visualizer)](https://github.com/chanderbhanswami/medzome-test-ai)
@@ -298,7 +298,7 @@ Users can generate a professional PDF report for any result, including all metri
 
 ## Live Demo
 
-**Try it now:** [Open Live Demo](https://your-demo-link.com)
+**Try it now:** [Open Live Demo](https://medzome.onrender.com/)
 
 (Replace with your actual deployment URL)
 
