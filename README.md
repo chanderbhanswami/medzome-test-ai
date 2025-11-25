@@ -62,23 +62,23 @@
   - [Extensibility](#extensibility)
   - [Error Handling \& Feedback](#error-handling--feedback)
   - [AI/ML Pipeline](#aiml-pipeline)
-  - [🔬 Advanced Features](#-advanced-features)
+  - [Advanced Features](#advanced-features)
     - [Semi-Quantitative Analysis](#semi-quantitative-analysis)
     - [Image Quality Assessment](#image-quality-assessment)
     - [Medical Recommendations](#medical-recommendations)
-  - [🎯 Roadmap](#-roadmap)
-  - [📚 Technical Details](#-technical-details)
+  - [Roadmap](#roadmap)
+  - [Technical Details](#technical-details)
     - [Supported Image Formats](#supported-image-formats)
     - [Performance](#performance)
-  - [💡 Tips for Best Results](#-tips-for-best-results)
-  - [🏆 Acknowledgments](#-acknowledgments)
+  - [Tips for Best Results](#tips-for-best-results)
+  - [Acknowledgments](#acknowledgments)
   - [Browser Compatibility](#browser-compatibility)
   - [Requirements](#requirements)
   - [Privacy \& Security](#privacy--security)
   - [License](#license)
   - [Support \& Contact](#support--contact)
   - [Additional Information](#additional-information)
-  - [⚠️ Disclaimer](#️-disclaimer)
+  - [Disclaimer](#disclaimer)
 
 ---
 
@@ -379,7 +379,7 @@ medzome_test_ai/
 
 ---
 
-## 🔬 Advanced Features
+## Advanced Features
 
 ### Semi-Quantitative Analysis
 The application measures test line intensity on a 0-100% scale:
@@ -406,7 +406,7 @@ Context-aware guidance based on:
 - Standard medical protocols
 
 ---
-## 🎯 Roadmap
+## Roadmap
 
 - [ ] Multi-strip batch analysis
 - [ ] Cloud model switching
@@ -420,7 +420,7 @@ Context-aware guidance based on:
 
 ---
 
-## 📚 Technical Details
+## Technical Details
 
 ### Supported Image Formats
 - JPEG (.jpg, .jpeg)
@@ -435,7 +435,7 @@ Context-aware guidance based on:
 
 ---
 
-## 💡 Tips for Best Results
+## Tips for Best Results
 
 1. **Lighting**: Use bright, even lighting without shadows
 2. **Positioning**: Place strip flat, aligned with camera
@@ -446,7 +446,7 @@ Context-aware guidance based on:
 
 ---
 
-## 🏆 Acknowledgments
+## Acknowledgments
 
 Built with:
 - TensorFlow / TensorFlow Lite
@@ -519,7 +519,7 @@ This project is licensed under the MIT License - see the [LICENSE](./LICENSE) fi
 
 Medzome is a product of continuous improvement. For the latest features, updates, and documentation, refer to the repository.
 
-## ⚠️ Disclaimer
+## Disclaimer
 
 **FOR SCREENING PURPOSES ONLY**
 
