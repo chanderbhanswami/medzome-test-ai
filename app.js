@@ -9,7 +9,7 @@
 
 const CONFIG = {
     MODEL_PATH: 'medzome_mvp_model.tflite',
-    API_ENDPOINT: 'http://localhost:5000',
+    API_ENDPOINT: '',  // Empty string = relative URLs (same origin, no CORS)
     INPUT_HEIGHT: 384,  // Will be updated from model info
     INPUT_WIDTH: 128,   // Will be updated from model info
     CONFIDENCE_THRESHOLD: 0.5,

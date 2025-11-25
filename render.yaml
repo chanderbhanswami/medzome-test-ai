@@ -1,0 +1,16 @@
+# Render Blueprint Configuration
+# Deploy with: https://render.com/docs/blueprint-spec
+
+services:
+  - type: web
+    name: medzome
+    runtime: python
+    plan: free  # Use 'starter' or 'standard' for more resources
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn server:app --bind 0.0.0.0:$PORT --timeout 300 --workers 1
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.10.12"
+      - key: MODEL_PATH
+        value: "medzome_mvp_model.tflite"
+    healthCheckPath: /health

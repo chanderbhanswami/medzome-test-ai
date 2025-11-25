@@ -11,8 +11,7 @@ import io
 import base64
 import numpy as np
 import cv2
-from flask import Flask, request, jsonify, Response
-from flask_cors import CORS
+from flask import Flask, request, jsonify, Response, send_from_directory
 from pathlib import Path
 import time
 from typing import Tuple, Dict, Any
@@ -69,8 +68,8 @@ config = Config()
 # Flask App Setup
 # ============================================================================
 
-app = Flask(__name__)
-CORS(app)  # Enable CORS for web interface
+app = Flask(__name__, static_folder='.', static_url_path='')
+# CORS not needed - single service serves both frontend and API
 
 # ============================================================================
 # Universal Model Loader
@@ -528,27 +527,15 @@ model_loader = None
 @app.route('/')
 def index():
     """Serve the main HTML page"""
-    try:
-        with open('index.html', 'r', encoding='utf-8') as f:
-            return f.read()
-    except FileNotFoundError:
-        return "index.html not found", 404
+    return send_from_directory('.', 'index.html')
 
 @app.route('/<path:path>')
 def static_files(path):
-    """Serve static files (CSS, JS)"""
-    try:
-        if path.endswith('.css'):
-            with open(path, 'r', encoding='utf-8') as f:
-                return Response(f.read(), mimetype='text/css')
-        elif path.endswith('.js'):
-            with open(path, 'r', encoding='utf-8') as f:
-                return Response(f.read(), mimetype='application/javascript')
-        else:
-            with open(path, 'rb') as f:
-                return f.read()
-    except FileNotFoundError:
-        return f"{path} not found", 404
+    """Serve static files (CSS, JS, images, etc.)"""
+    # Exclude API routes - they are handled by specific route handlers
+    if path in ['predict', 'health', 'analyze'] or path.startswith('model/'):
+        return None
+    return send_from_directory('.', path)
 
 def load_model():
     """Load model on server startup"""
@@ -719,7 +706,7 @@ if __name__ == '__main__':
     parser.add_argument('--model', default=config.MODEL_PATH, help='Model path')
     parser.add_argument('--threshold', type=float, help='Custom confidence threshold (0.0-1.0)')
     parser.add_argument('--host', default='0.0.0.0', help='Host address')
-    parser.add_argument('--port', type=int, default=5000, help='Port number')
+    parser.add_argument('--port', type=int, default=None, help='Port number')
     parser.add_argument('--debug', action='store_true', help='Debug mode')
     
     args = parser.parse_args()
@@ -732,13 +719,16 @@ if __name__ == '__main__':
         config.CONFIDENCE_THRESHOLD = args.threshold
         print(f"\n⚙️  Custom threshold from CLI: {config.CONFIDENCE_THRESHOLD}\n")
     
+    # Get port from environment variable (Render sets this) or use default
+    port = args.port or int(os.environ.get('PORT', 5000))
+    
     print("\n" + "="*70)
     print("MEDZOME FLASK BACKEND SERVER")
     print("="*70)
     print(f"Model: {config.MODEL_PATH}")
     print(f"Threshold: {config.CONFIDENCE_THRESHOLD}")
     print(f"Host: {args.host}")
-    print(f"Port: {args.port}")
+    print(f"Port: {port}")
     print("="*70 + "\n")
     
     # Load model before starting server
@@ -747,7 +737,7 @@ if __name__ == '__main__':
     # Run server
     app.run(
         host=args.host,
-        port=args.port,
+        port=port,
         debug=args.debug,
         threaded=True
     )
