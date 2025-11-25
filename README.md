@@ -300,8 +300,6 @@ Users can generate a professional PDF report for any result, including all metri
 
 **Try it now:** [Open Live Demo](https://medzome.onrender.com/)
 
-(Replace with your actual deployment URL)
-
 ---
 
 ## Project Structure
