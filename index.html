@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medzome - Lateral Flow Test Analysis</title>
+    <!-- Favicons for all platforms -->
+    <link rel="icon" type="image/png" sizes="32x32" href="logo.png">
+    <link rel="icon" type="image/png" sizes="16x16" href="logo.png">
+    <link rel="apple-touch-icon" sizes="180x180" href="logo.png">
+    <link rel="shortcut icon" href="logo.png">
+    <meta name="msapplication-TileImage" content="logo.png">
+    <meta name="theme-color" content="#ffffff">
+    <!-- Bootstrap CSS -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+    <!-- Bootstrap Icons -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    
+    <!-- Loading Overlay -->
+    <div id="loadingOverlay" class="loading-overlay">
+        <div class="loading-content">
+            <div class="medical-spinner"></div>
+            <p class="loading-text">Processing...</p>
+        </div>
+    </div>
+
+    <!-- Header -->
+    <header class="header">
+            <div class="container">
+                <div class="header-content text-center">
+                    <div class="logo d-flex flex-column align-items-center justify-content-center">
+                        <div class="d-flex align-items-center justify-content-center mb-4">
+                            <img src="logo.png" alt="Medzome Logo" class="medzome-logo me-2" />
+                            <h1 class="mb-0">Medzome</h1>
+                        </div>
+                        <p class="tagline mb-0">AI-Powered Lateral Flow Test Analysis</p>
+                    </div>
+                </div>
+            </div>
+    </header>
+
+    <!-- Main Container -->
+    <div class="container main-container">
+        
+        <!-- Info Panel -->
+        <div id="infoPanel" class="info-panel">
+            <div class="info-content">
+                <i class="bi bi-info-circle"></i>
+                <span id="infoText">Ready to analyze. Please upload or capture a test strip image.</span>
+            </div>
+        </div>
+
+        <!-- Usage Guide -->
+        <div class="card usage-guide mb-4">
+            <div class="card-header" data-bs-toggle="collapse" data-bs-target="#guideContent">
+                <i class="bi bi-book"></i> Usage Guide
+                <i class="bi bi-chevron-down float-end"></i>
+            </div>
+            <div id="guideContent" class="collapse">
+                <div class="card-body">
+                    <div class="row">
+                        <div class="col-md-4 mb-3">
+                            <div class="guide-step">
+                                <div class="step-number">1</div>
+                                <h5>Prepare Test Strip</h5>
+                                <p>Ensure the test strip is clearly visible with good lighting. Place on a flat, contrasting surface.</p>
+                            </div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <div class="guide-step">
+                                <div class="step-number">2</div>
+                                <h5>Capture/Upload Image</h5>
+                                <p>Use the camera, upload from device, or drag and drop. Align the strip within the guide overlay.</p>
+                            </div>
+                        </div>
+                        <div class="col-md-4 mb-3">
+                            <div class="guide-step">
+                                <div class="step-number">3</div>
+                                <h5>View Results</h5>
+                                <p>Wait for AI analysis. Review line intensity, confidence score, and medical recommendations.</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Main Content Grid -->
+        <div class="row">
+            
+            <!-- Left Column: Upload Section -->
+            <div class="col-lg-6 mb-4">
+                <div class="card upload-card">
+                    <div class="card-header">
+                        <i class="bi bi-cloud-upload"></i> Test Strip Upload
+                    </div>
+                    <div class="card-body">
+                        
+                        <!-- Upload Methods -->
+                        <div class="upload-methods">
+                            
+                            <!-- Drag & Drop Zone -->
+                            <div id="dropZone" class="drop-zone">
+                                <i class="bi bi-file-earmark-image drop-icon"></i>
+                                <h4>Drag & Drop Image Here</h4>
+                                <p>or</p>
+                                <label for="fileInput" class="btn btn-primary btn-upload">
+                                    <i class="bi bi-folder-open"></i> Browse Files
+                                </label>
+                                <input type="file" id="fileInput" accept="image/*" hidden>
+                                <p class="upload-info">Supports: JPG, PNG, BMP (Max 10MB)</p>
+                            </div>
+
+                            <!-- Camera Capture Button -->
+                            <div class="text-center mt-3">
+                                <button id="cameraBtn" class="btn btn-success btn-camera">
+                                    <i class="bi bi-camera"></i> Capture from Camera
+                                </button>
+                            </div>
+
+                        </div>
+
+                        <!-- Upload Progress -->
+                        <div id="uploadProgress" class="upload-progress" style="display: none;">
+                            <div class="progress">
+                                <div id="progressBar" class="progress-bar progress-bar-striped progress-bar-animated" 
+                                     role="progressbar" style="width: 0%"></div>
+                            </div>
+                            <p class="text-center mt-2">
+                                <small id="progressText">Uploading...</small>
+                            </p>
+                        </div>
+
+                        <!-- Preview Section -->
+                        <div id="previewSection" class="preview-section" style="display: none;">
+                            <div class="preview-header">
+                                <h5><i class="bi bi-image"></i> Image Preview</h5>
+                                <button id="clearBtn" class="btn btn-sm btn-outline-danger">
+                                    <i class="bi bi-x-circle"></i> Clear
+                                </button>
+                            </div>
+                            <div class="preview-container">
+                                <img id="previewImage" alt="Test strip preview">
+                                <div id="scanningOverlay" class="scanning-overlay" style="display: none;">
+                                    <div class="scan-line"></div>
+                                    <div class="scan-glow"></div>
+                                </div>
+                            </div>
+                            <div class="preview-actions">
+                                <button id="analyzeBtn" class="btn btn-primary btn-lg w-100">
+                                    <i class="bi bi-graph-up-arrow"></i> Analyze Test Strip
+                                </button>
+                            </div>
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Column: Results Section -->
+            <div class="col-lg-6 mb-4">
+                <div class="card results-card">
+                    <div class="card-header">
+                        <i class="bi bi-clipboard-data"></i> Test Results
+                    </div>
+                    <div class="card-body">
+                        
+                        <!-- No Results Placeholder -->
+                        <div id="noResults" class="no-results">
+                            <i class="bi bi-clipboard-x"></i>
+                            <p>No results yet. Upload or capture a test strip to begin analysis.</p>
+                        </div>
+
+                        <!-- Results Display -->
+                        <div id="resultsDisplay" style="display: none;">
+                            
+                            <!-- Primary Result Badge -->
+                            <div id="resultBadge" class="result-badge">
+                                <i id="resultIcon" class="bi"></i>
+                                <h2 id="resultStatus"></h2>
+                                <p id="resultMessage"></p>
+                            </div>
+
+                            <!-- Detailed Metrics -->
+                            <div class="metrics-grid">
+                                <div class="metric-card">
+                                    <i class="bi bi-speedometer2"></i>
+                                    <h6>Confidence</h6>
+                                    <div class="metric-value" id="confidenceValue">-</div>
+                                    <div class="progress metric-progress">
+                                        <div id="confidenceBar" class="progress-bar" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                                <div class="metric-card">
+                                    <i class="bi bi-brightness-high"></i>
+                                    <h6>Line Intensity</h6>
+                                    <div class="metric-value" id="intensityValue">-</div>
+                                    <div class="progress metric-progress">
+                                        <div id="intensityBar" class="progress-bar" style="width: 0%"></div>
+                                    </div>
+                                </div>
+                                <div class="metric-card">
+                                    <i class="bi bi-sliders"></i>
+                                    <h6>Threshold</h6>
+                                    <div class="metric-value" id="thresholdValue">-</div>
+                                </div>
+                                <div class="metric-card">
+                                    <i class="bi bi-stopwatch"></i>
+                                    <h6>Processing Time</h6>
+                                    <div class="metric-value" id="timeValue">-</div>
+                                </div>
+                            </div>
+
+                            <!-- Detailed Analysis -->
+                            <div class="analysis-details">
+                                <h5><i class="bi bi-clipboard-pulse"></i> Detailed Analysis</h5>
+                                <div class="detail-item">
+                                    <span class="detail-label">Control Line:</span>
+                                    <span id="controlLine" class="detail-value">-</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Test Line:</span>
+                                    <span id="testLine" class="detail-value">-</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Intensity Score:</span>
+                                    <span id="intensityScore" class="detail-value">-</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Quality Assessment:</span>
+                                    <span id="qualityAssessment" class="detail-value">-</span>
+                                </div>
+                            </div>
+
+                            <!-- Medical Guidance -->
+                            <div id="medicalGuidance" class="medical-guidance">
+                                <i class="bi bi-heart-pulse"></i>
+                                <h5>Medical Recommendation</h5>
+                                <p id="guidanceText"></p>
+                            </div>
+
+                            <!-- Action Buttons -->
+                            <div class="result-actions">
+                                <button id="downloadBtn" class="btn btn-success">
+                                    <i class="bi bi-download"></i> Download Report
+                                </button>
+                                <button id="resetBtn" class="btn btn-outline-primary">
+                                    <i class="bi bi-arrow-clockwise"></i> New Test
+                                </button>
+                            </div>
+
+                        </div>
+
+                    </div>
+                </div>
+            </div>
+
+        </div>
+
+        <!-- Result History -->
+        <div class="card history-card">
+            <div class="card-header" data-bs-toggle="collapse" data-bs-target="#historyContent">
+                <i class="bi bi-clock-history"></i> Test History
+                <button id="clearHistoryBtn" class="btn btn-sm btn-outline-danger float-end" style="margin-left: 10px;">
+                    <i class="bi bi-trash"></i> Clear History
+                </button>
+                <i class="bi bi-chevron-down float-end"></i>
+            </div>
+            <div id="historyContent" class="collapse">
+                <div class="card-body">
+                    <div id="historyList" class="history-list">
+                        <div class="no-history">
+                            <i class="bi bi-inbox"></i>
+                            <p>No test history available.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <!-- Camera Modal -->
+    <div id="cameraModal" class="camera-modal">
+        <div class="camera-container">
+            <div class="camera-header">
+                <h4><i class="bi bi-camera-video"></i> Capture Test Strip</h4>
+                <button id="closeCameraBtn" class="btn-close-camera">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            <div class="camera-body">
+                <div class="camera-viewport">
+                    <video id="cameraStream" autoplay playsinline></video>
+                    <canvas id="cameraCanvas" style="display: none;"></canvas>
+                    <!-- Scan Guide Overlay -->
+                    <div class="scan-guide">
+                        <div class="guide-frame">
+                            <div class="corner corner-tl"></div>
+                            <div class="corner corner-tr"></div>
+                            <div class="corner corner-bl"></div>
+                            <div class="corner corner-br"></div>
+                        </div>
+                        <p class="guide-text">Align test strip within frame</p>
+                    </div>
+                </div>
+                <div class="camera-controls">
+                    <button id="captureBtn" class="btn btn-primary btn-lg">
+                        <i class="bi bi-camera-fill"></i> Capture
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Capture Confirmation Modal -->
+    <div id="captureModal" class="capture-modal">
+        <div class="capture-container">
+            <div class="capture-header">
+                <h4><i class="bi bi-image"></i> Review Captured Image</h4>
+            </div>
+            <div class="capture-body">
+                <img id="capturedImage" alt="Captured test strip">
+            </div>
+            <div class="capture-actions">
+                <button id="useCaptureBtn" class="btn btn-success">
+                    <i class="bi bi-check-circle"></i> Get Result
+                </button>
+                <button id="retakeBtn" class="btn btn-warning">
+                    <i class="bi bi-arrow-repeat"></i> Retake
+                </button>
+                <button id="cancelCaptureBtn" class="btn btn-outline-secondary">
+                    <i class="bi bi-x-circle"></i> Cancel
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Results Detail Modal -->
+    <div id="resultsModal" class="results-modal">
+        <div class="results-modal-container">
+            <div class="results-modal-header">
+                <h4><i class="bi bi-clipboard-data"></i> Test Result Details</h4>
+                <button id="closeResultsModalBtn" class="btn-close-modal">
+                    <i class="bi bi-x-lg"></i>
+                </button>
+            </div>
+            <div class="results-modal-body">
+                <!-- Test Image Preview -->
+                <div class="modal-image-preview">
+                    <img id="modalPreviewImage" alt="Test strip">
+                </div>
+                
+                <!-- Result Badge -->
+                <div id="modalResultBadge" class="result-badge">
+                    <i id="modalResultIcon" class="bi bi-check-circle-fill"></i>
+                    <h2 id="modalResultStatus">NEGATIVE</h2>
+                </div>
+                
+                <!-- Metrics Grid -->
+                <div class="metrics-grid">
+                    <div class="metric-card">
+                        <i class="bi bi-speedometer2"></i>
+                        <h6>Confidence</h6>
+                        <div class="metric-value" id="modalConfidenceValue">0%</div>
+                        <div class="metric-progress">
+                            <div class="progress">
+                                <div id="modalConfidenceBar" class="progress-bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <i class="bi bi-bar-chart-fill"></i>
+                        <h6>Intensity</h6>
+                        <div class="metric-value" id="modalIntensityValue">0%</div>
+                        <div class="metric-progress">
+                            <div class="progress">
+                                <div id="modalIntensityBar" class="progress-bar" style="width: 0%"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="metric-card">
+                        <i class="bi bi-bullseye"></i>
+                        <h6>Threshold</h6>
+                        <div class="metric-value" id="modalThresholdValue">50%</div>
+                    </div>
+                    <div class="metric-card">
+                        <i class="bi bi-clock-fill"></i>
+                        <h6>Analysis Time</h6>
+                        <div class="metric-value" id="modalTimeValue">N/A</div>
+                    </div>
+                </div>
+                
+                <!-- Analysis Details -->
+                <div class="analysis-details">
+                    <h5><i class="bi bi-info-circle"></i> Detailed Analysis</h5>
+                    <div class="detail-item">
+                        <span class="detail-label">Control Line:</span>
+                        <span class="detail-value" id="modalControlLine">Not Detected</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Test Line:</span>
+                        <span class="detail-value" id="modalTestLine">Not Detected</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Intensity Score:</span>
+                        <span class="detail-value" id="modalIntensityScore">N/A</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Quality Assessment:</span>
+                        <span class="detail-value" id="modalQualityAssessment">N/A</span>
+                    </div>
+                </div>
+                
+                <!-- Medical Guidance -->
+                <div id="modalMedicalGuidance" class="medical-guidance">
+                    <i class="bi bi-heart-pulse"></i>
+                    <h5>Medical Guidance</h5>
+                    <p id="modalGuidanceText">Please consult a healthcare professional.</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirmModal" class="confirm-modal">
+        <div class="confirm-container">
+            <div class="confirm-header">
+                <i class="bi bi-exclamation-triangle"></i>
+                <h4 id="confirmTitle">Confirm Action</h4>
+            </div>
+            <div class="confirm-body">
+                <p id="confirmMessage">Are you sure you want to proceed?</p>
+            </div>
+            <div class="confirm-actions">
+                <button id="confirmCancelBtn" class="btn btn-outline-secondary">
+                    <i class="bi bi-x-circle"></i> Cancel
+                </button>
+                <button id="confirmOkBtn" class="btn btn-danger">
+                    <i class="bi bi-check-circle"></i> Confirm
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <p>&copy; 2025 Medzome. AI-Powered Medical Diagnostics. For professional use only.</p>
+            <p><small>This tool is for screening purposes. Always consult a healthcare professional for diagnosis.</small></p>
+        </div>
+    </footer>
+
+    <!-- Bootstrap JS -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- jsPDF for PDF generation -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <!-- Main App Script -->
+    <script src="app.js"></script>
+
+</body>
+</html>
