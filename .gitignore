@@ -37,11 +37,11 @@ data/images/
 data/masks/
 data/annotations/
 
-# Training
-.augment_data.py
-.final_inference.py
-.ga_optimizer.py
-.ga_simulation.py
-.lfa_quantifier.py
-.process_full_dataset.py
-.train_final_model_stabilized.py
+# Training scripts (not needed for deployment)
+augment_data.py
+final_inference.py
+ga_optimizer.py
+ga_simulation.py
+lfa_quantifier.py
+process_full_dataset.py
+train_final_model_stabilized.py
