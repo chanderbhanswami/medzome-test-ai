@@ -979,14 +979,32 @@ function downloadReport() {
             const decisionMethod = analysisResults.decision_method || 'AI_Agreement';
             const inputType = analysisResults.input_type || 'Direct Upload';
             
-            // Header
+            // Header background
             doc.setFillColor(13, 110, 253);
             doc.rect(0, 0, 210, 40, 'F');
+            
+            // Add logo and title centered side by side
+            try {
+                const logoImg = new Image();
+                logoImg.src = 'logo.png';
+                // Smaller logo dimensions
+                const logoHeight = 12;
+                const logoWidth = 12;
+                // Center calculation: logo + small gap + title width
+                // Title "MEDZOME" at font 24 is ~50mm wide, logo is 12mm, gap is 3mm = ~65mm total
+                // Center position: (210 - 65) / 2 = ~72.5mm for logo start
+                doc.addImage(logoImg, 'PNG', 72, 9, logoWidth, logoHeight);
+            } catch (e) {
+                console.warn('Could not add logo to PDF:', e);
+            }
+            
+            // Header text (positioned right next to logo, both centered)
             doc.setTextColor(255, 255, 255);
             doc.setFontSize(24);
-            doc.text('MEDZOME', 105, 20, { align: 'center' });
+            // Logo ends at 72+12=84, add 3mm gap, text starts at 87
+            doc.text('MEDZOME', 87, 18);
             doc.setFontSize(12);
-            doc.text('Lateral Flow Test Analysis Report', 105, 30, { align: 'center' });
+            doc.text('Lateral Flow Test Analysis Report', 105, 33, { align: 'center' });
             
             // Reset colors
             doc.setTextColor(0, 0, 0);
@@ -1094,9 +1112,29 @@ function downloadReport() {
             
             yPos += 5;
             if (currentImageData) {
-                const imgWidth = 60;
-                const imgHeight = 100;
-                doc.addImage(currentImageData, 'JPEG', 75, yPos, imgWidth, imgHeight);
+                // Calculate image dimensions maintaining aspect ratio
+                const img = new Image();
+                img.src = currentImageData;
+                
+                const maxWidth = 80;  // Maximum width in PDF
+                const maxHeight = 120; // Maximum height in PDF
+                
+                // Get original dimensions
+                const origWidth = img.width || 128;
+                const origHeight = img.height || 384;
+                
+                // Calculate scale to fit within bounds while maintaining ratio
+                const scaleW = maxWidth / origWidth;
+                const scaleH = maxHeight / origHeight;
+                const scale = Math.min(scaleW, scaleH);
+                
+                const imgWidth = origWidth * scale;
+                const imgHeight = origHeight * scale;
+                
+                // Center the image horizontally
+                const imgX = (210 - imgWidth) / 2;
+                
+                doc.addImage(currentImageData, 'JPEG', imgX, yPos, imgWidth, imgHeight);
                 yPos += imgHeight + 10;
             }
             
