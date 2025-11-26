@@ -3,13 +3,13 @@
 
 # Core Dependencies
 flask==3.0.0
-numpy==1.24.3
+numpy==1.26.4
 opencv-python-headless==4.8.1.78
 Pillow==10.1.0
 scipy==1.11.4
 
-# TensorFlow (for Keras and H5 models)
-tensorflow==2.15.0
+# TensorFlow 2.16+ includes Keras 3 (required for .keras models)
+tensorflow==2.16.1
 
 # Production WSGI Server (required for Render)
 gunicorn==21.2.0
