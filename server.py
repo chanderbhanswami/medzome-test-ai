@@ -14,7 +14,6 @@ import os
 import sys
 import io
 import base64
-import gc
 import numpy as np
 import cv2
 from flask import Flask, request, jsonify, Response, send_from_directory
@@ -930,9 +929,6 @@ def predict():
     including quantitative data and decision method (like final_inference.py).
     """
     
-    # Force garbage collection before processing to free memory
-    gc.collect()
-    
     try:
         # Parse request
         data = request.get_json()
@@ -1048,19 +1044,10 @@ def predict():
             'timestamp': time.time()
         }
         
-        # Clean up memory after processing
-        del original_image
-        del analysis_image
-        del processed_image
-        gc.collect()
-        
         return jsonify(response)
         
     except Exception as e:
-        import traceback
         print(f"❌ Prediction error: {e}")
-        traceback.print_exc()
-        gc.collect()  # Clean up on error too
         return jsonify({
             'success': False,
             'error': str(e)
