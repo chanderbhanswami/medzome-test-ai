@@ -8,7 +8,7 @@
 // ============================================================================
 
 const CONFIG = {
-    MODEL_PATH: 'medzome_mvp_model.tflite',
+    MODEL_PATH: 'medzome_final_model.keras',
     API_ENDPOINT: '',  // Empty string = relative URLs (same origin, no CORS)
     INPUT_HEIGHT: 384,  // Will be updated from model info
     INPUT_WIDTH: 128,   // Will be updated from model info
@@ -73,6 +73,11 @@ const elements = {
     intensityScore: document.getElementById('intensityScore'),
     qualityAssessment: document.getElementById('qualityAssessment'),
     
+    // New quantitative data fields
+    decisionMethod: document.getElementById('decisionMethod'),
+    inputType: document.getElementById('inputType'),
+    ratioTC: document.getElementById('ratioTC'),
+    
     // Guidance
     medicalGuidance: document.getElementById('medicalGuidance'),
     guidanceText: document.getElementById('guidanceText'),
@@ -122,6 +127,8 @@ const elements = {
     modalQualityAssessment: document.getElementById('modalQualityAssessment'),
     modalMedicalGuidance: document.getElementById('modalMedicalGuidance'),
     modalGuidanceText: document.getElementById('modalGuidanceText'),
+    modalDecisionMethod: document.getElementById('modalDecisionMethod'),
+    modalInputType: document.getElementById('modalInputType'),
     
     // History
     historyList: document.getElementById('historyList'),
@@ -551,26 +558,59 @@ function displayResults(result) {
         return;
     }
     
-    // Valid test strip - proceed with normal display
-    const isPositive = result.confidence > CONFIG.CONFIDENCE_THRESHOLD;
+    // Use the hybrid decision from server (diagnosis field) or fallback to confidence comparison
+    const isPositive = result.diagnosis === 'Positive' || result.is_positive;
     const status = isPositive ? 'positive' : 'negative';
     
-    // Update result badge
+    // Get decision method from server response
+    const decisionMethod = result.decision_method || 'AI_Agreement';
+    const inputType = result.input_type || 'Direct Upload';
+    
+    // Get quantitative data from server response
+    const quantData = result.quantitative_data || {};
+    const controlLineValue = parseFloat(quantData.control_line) || 0;
+    const testLineValue = parseFloat(quantData.test_line) || 0;
+    const ratioTC = parseFloat(quantData.ratio_tc) || 0;
+    
+    // Update result badge with decision method indicator
     elements.resultBadge.className = `result-badge ${status}`;
     elements.resultIcon.className = isPositive ? 'bi bi-x-circle-fill' : 'bi bi-check-circle-fill';
     elements.resultStatus.textContent = isPositive ? 'POSITIVE' : 'NEGATIVE';
-    elements.resultMessage.textContent = isPositive 
-        ? 'Test line detected - Further evaluation recommended'
-        : 'No test line detected - Result appears negative';
     
-    // Calculate line intensity
-    const lineIntensity = calculateLineIntensity(result);
+    // Update result message based on decision method
+    let resultMessage = '';
+    switch (decisionMethod) {
+        case 'Confirmed_Positive':
+            resultMessage = 'Strong positive - Both AI and quantitative analysis confirm';
+            break;
+        case 'AI_Rescued_Faint_Line':
+            resultMessage = 'Faint positive - AI detected with high confidence';
+            break;
+        case 'Signal_Override':
+            resultMessage = 'Positive by signal - Strong test line intensity detected';
+            break;
+        case 'Quantifier_Veto':
+            resultMessage = 'Negative - Quantitative analysis indicates no visible line';
+            break;
+        case 'Confirmed_Negative':
+            resultMessage = 'Confirmed negative - Both AI and quantitative analysis agree';
+            break;
+        default:
+            resultMessage = isPositive 
+                ? 'Test line detected - Further evaluation recommended'
+                : 'No test line detected - Result appears negative';
+    }
+    elements.resultMessage.textContent = resultMessage;
+    
+    // Calculate display intensity from quantitative data
+    const lineIntensity = Math.min(testLineValue * 5, 100); // Scale for display (0-100%)
     const intensityCategory = getIntensityCategory(lineIntensity);
     
     // Update metrics
-    elements.confidenceValue.textContent = (result.confidence * 100).toFixed(1) + '%';
-    elements.confidenceBar.style.width = (result.confidence * 100) + '%';
-    elements.confidenceBar.className = `progress-bar ${getConfidenceClass(result.confidence)}`;
+    const aiConfidence = result.confidence || 0;
+    elements.confidenceValue.textContent = (aiConfidence * 100).toFixed(1) + '%';
+    elements.confidenceBar.style.width = (aiConfidence * 100) + '%';
+    elements.confidenceBar.className = `progress-bar ${getConfidenceClass(aiConfidence)}`;
     
     elements.intensityValue.textContent = lineIntensity.toFixed(1) + '%';
     elements.intensityBar.style.width = lineIntensity + '%';
@@ -579,26 +619,63 @@ function displayResults(result) {
     elements.thresholdValue.textContent = (CONFIG.CONFIDENCE_THRESHOLD * 100).toFixed(0) + '%';
     elements.timeValue.textContent = result.processing_time_ms.toFixed(0) + ' ms';
     
-    // Update detailed analysis
-    elements.controlLine.textContent = detectControlLine(result) ? '✓ Detected' : '✗ Not Detected';
-    elements.controlLine.className = detectControlLine(result) ? 'detail-value text-success' : 'detail-value text-danger';
+    // Update detailed analysis with REAL quantitative data
+    elements.controlLine.textContent = controlLineValue > 0 
+        ? `✓ ${controlLineValue.toFixed(2)} intensity` 
+        : '✗ Not Detected';
+    elements.controlLine.className = controlLineValue > 0 ? 'detail-value text-success' : 'detail-value text-danger';
     
-    elements.testLine.textContent = isPositive ? '✓ Detected' : '✗ Not Detected';
-    elements.testLine.className = isPositive ? 'detail-value text-danger' : 'detail-value text-success';
+    elements.testLine.textContent = testLineValue > 3.0 
+        ? `✓ ${testLineValue.toFixed(2)} intensity` 
+        : testLineValue > 0 
+            ? `○ ${testLineValue.toFixed(2)} (weak)` 
+            : '✗ Not Detected';
+    elements.testLine.className = testLineValue > 3.0 ? 'detail-value text-danger' : testLineValue > 0 ? 'detail-value text-warning' : 'detail-value text-success';
     
-    elements.intensityScore.textContent = `${lineIntensity.toFixed(1)}% (${intensityCategory})`;
-    elements.qualityAssessment.textContent = assessImageQuality(result);
+    // Update intensity score with T/C ratio
+    elements.intensityScore.textContent = `${testLineValue.toFixed(2)} (T/C: ${ratioTC.toFixed(4)})`;
     
-    // Update medical guidance
-    updateMedicalGuidance(isPositive, lineIntensity, intensityCategory);
+    // Update quality assessment
+    elements.qualityAssessment.textContent = result.quality || assessImageQuality(result);
+    
+    // Update decision method display if element exists
+    if (elements.decisionMethod) {
+        elements.decisionMethod.textContent = formatDecisionMethod(decisionMethod);
+    }
+    
+    // Update input type display if element exists
+    if (elements.inputType) {
+        elements.inputType.textContent = inputType;
+    }
+    
+    // Update medical guidance with real data
+    updateMedicalGuidance(isPositive, lineIntensity, intensityCategory, false, decisionMethod, testLineValue);
     
     // Scroll to results
     elements.resultsDisplay.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
 }
 
+function formatDecisionMethod(method) {
+    const methodLabels = {
+        'Confirmed_Positive': '✓ Confirmed Positive',
+        'AI_Rescued_Faint_Line': '🔍 AI Rescued Faint Line',
+        'Signal_Override': '📊 Signal Override',
+        'Quantifier_Veto': '⚖️ Quantifier Veto',
+        'Confirmed_Negative': '✓ Confirmed Negative',
+        'AI_Agreement': '🤖 AI Agreement'
+    };
+    return methodLabels[method] || method;
+}
+
 function calculateLineIntensity(result) {
-    // Calculate intensity based on confidence and additional factors
-    // Higher confidence = higher intensity
+    // Use quantitative data if available (from LFAQuantifier)
+    if (result.quantitative_data && result.quantitative_data.test_line) {
+        const testLineValue = parseFloat(result.quantitative_data.test_line) || 0;
+        // Scale for display: multiply by 5 and cap at 100
+        return Math.min(testLineValue * 5, 100);
+    }
+    
+    // Fallback: Calculate intensity based on confidence and additional factors
     let intensity = result.confidence * 100;
     
     // Adjust based on threshold proximity
@@ -620,8 +697,17 @@ function getIntensityCategory(intensity) {
 }
 
 function detectControlLine(result) {
-    // Assume control line is present if confidence is reasonable
-    // In production, this would be from actual line detection
+    // Use quantitative data if available
+    if (result.quantitative_data && result.quantitative_data.control_line) {
+        return parseFloat(result.quantitative_data.control_line) > 0;
+    }
+    
+    // Use control_line_detected from server if available
+    if (result.control_line_detected !== undefined) {
+        return result.control_line_detected;
+    }
+    
+    // Fallback: Assume control line is present if confidence is reasonable
     return result.confidence > 0.3;
 }
 
@@ -649,7 +735,7 @@ function getIntensityClass(intensity) {
     return 'bg-success';
 }
 
-function updateMedicalGuidance(isPositive, intensity, category, isInvalid = false) {
+function updateMedicalGuidance(isPositive, intensity, category, isInvalid = false, decisionMethod = '', testLineIntensity = 0) {
     if (isInvalid) {
         // Invalid test - show warning guidance
         elements.medicalGuidance.className = 'medical-guidance warning';
@@ -664,11 +750,29 @@ function updateMedicalGuidance(isPositive, intensity, category, isInvalid = fals
             <em>A valid test strip must show at least a control line for results to be reliable.</em>
         `;
     } else if (isPositive) {
+        // Get decision method explanation
+        let methodExplanation = '';
+        switch (decisionMethod) {
+            case 'Confirmed_Positive':
+                methodExplanation = 'Both AI analysis and quantitative measurement confirm a visible test line.';
+                break;
+            case 'AI_Rescued_Faint_Line':
+                methodExplanation = 'AI detected a faint test line with high confidence. Quantitative measurement shows weak signal.';
+                break;
+            case 'Signal_Override':
+                methodExplanation = `Strong quantitative signal detected (intensity: ${testLineIntensity.toFixed(2)}). The test line is clearly visible.`;
+                break;
+            default:
+                methodExplanation = 'Test line detected by analysis system.';
+        }
+        
         elements.medicalGuidance.className = 'medical-guidance danger';
         elements.guidanceText.innerHTML = `
             <strong>⚠️ Positive Result Detected (${category} Intensity)</strong><br><br>
+            <strong>Detection Method:</strong> ${formatDecisionMethod(decisionMethod)}<br>
+            <em>${methodExplanation}</em><br><br>
             • This test indicates a positive result for the lateral flow assay<br>
-            • Line intensity suggests ${category.toLowerCase()} presence of target antigen<br>
+            • Line intensity: ${testLineIntensity.toFixed(2)} (${category.toLowerCase()} signal)<br>
             • <strong>Immediate medical consultation is strongly recommended</strong><br>
             • Do not self-diagnose - consult a healthcare professional<br>
             • Follow local health guidelines and protocols<br>
@@ -676,9 +780,24 @@ function updateMedicalGuidance(isPositive, intensity, category, isInvalid = fals
             <em>This is a screening tool only. Professional medical advice is essential.</em>
         `;
     } else {
+        // Get decision method explanation for negative
+        let methodExplanation = '';
+        switch (decisionMethod) {
+            case 'Confirmed_Negative':
+                methodExplanation = 'Both AI analysis and quantitative measurement confirm no visible test line.';
+                break;
+            case 'Quantifier_Veto':
+                methodExplanation = 'AI showed some confidence, but quantitative analysis confirmed no significant test line signal.';
+                break;
+            default:
+                methodExplanation = 'No significant test line detected.';
+        }
+        
         elements.medicalGuidance.className = 'medical-guidance success';
         elements.guidanceText.innerHTML = `
             <strong>✓ Negative Result</strong><br><br>
+            <strong>Detection Method:</strong> ${formatDecisionMethod(decisionMethod)}<br>
+            <em>${methodExplanation}</em><br><br>
             • No test line detected - result appears negative<br>
             • Control line present - test is valid<br>
             • This does not completely rule out infection<br>
@@ -695,10 +814,13 @@ function updateMedicalGuidance(isPositive, intensity, category, isInvalid = fals
 // ============================================================================
 
 function saveToHistory(result, imageData) {
+    // Use the server's diagnosis decision (hybrid logic) instead of just confidence
+    const isPositive = result.diagnosis === 'Positive' || result.is_positive === true;
+    
     const historyItem = {
         id: Date.now(),
         timestamp: new Date().toISOString(),
-        isPositive: result.confidence > CONFIG.CONFIDENCE_THRESHOLD,
+        isPositive: isPositive,
         confidence: result.confidence,
         intensity: calculateLineIntensity(result),
         processingTime: result.processingTime,
@@ -812,9 +934,17 @@ function downloadReport() {
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF();
             
-            const isPositive = analysisResults.confidence > CONFIG.CONFIDENCE_THRESHOLD;
+            const isPositive = analysisResults.diagnosis === 'Positive' || analysisResults.is_positive;
             const lineIntensity = calculateLineIntensity(analysisResults);
             const intensityCategory = getIntensityCategory(lineIntensity);
+            
+            // Get quantitative data
+            const quantData = analysisResults.quantitative_data || {};
+            const controlLineValue = parseFloat(quantData.control_line) || 0;
+            const testLineValue = parseFloat(quantData.test_line) || 0;
+            const ratioTC = parseFloat(quantData.ratio_tc) || 0;
+            const decisionMethod = analysisResults.decision_method || 'AI_Agreement';
+            const inputType = analysisResults.input_type || 'Direct Upload';
             
             // Header
             doc.setFillColor(13, 110, 253);
@@ -860,13 +990,14 @@ function downloadReport() {
             doc.setFont(undefined, 'normal');
             
             const metrics = [
-                ['Confidence Score:', `${(analysisResults.confidence * 100).toFixed(1)}%`],
-                ['Line Intensity:', `${lineIntensity.toFixed(1)}% (${intensityCategory})`],
-                ['Threshold:', `${(CONFIG.CONFIDENCE_THRESHOLD * 100).toFixed(0)}%`],
-                ['Processing Time:', `${analysisResults.processingTime.toFixed(0)} ms`],
-                ['Control Line:', detectControlLine(analysisResults) ? 'Detected' : 'Not Detected'],
-                ['Test Line:', isPositive ? 'Detected' : 'Not Detected'],
-                ['Image Quality:', assessImageQuality(analysisResults)],
+                ['Decision Method:', formatDecisionMethod(decisionMethod).replace(/[✓🔍📊⚖️🤖]/g, '').trim()],
+                ['Input Type:', inputType],
+                ['AI Confidence:', `${(analysisResults.confidence * 100).toFixed(1)}%`],
+                ['Control Line:', controlLineValue > 0 ? `${controlLineValue.toFixed(2)} intensity` : 'Not Detected'],
+                ['Test Line:', testLineValue > 0 ? `${testLineValue.toFixed(2)} intensity` : 'Not Detected'],
+                ['T/C Ratio:', ratioTC.toFixed(4)],
+                ['Processing Time:', `${(analysisResults.processing_time_ms || 0).toFixed(0)} ms`],
+                ['Image Quality:', analysisResults.quality || assessImageQuality(analysisResults)],
                 ['Test Date:', new Date().toLocaleString()]
             ];
             
@@ -1056,18 +1187,32 @@ function showResultsModal(result, imageData) {
         return;
     }
     
-    // Set image
-    elements.modalPreviewImage.src = imageData;
+    // Set image (handle missing imageData)
+    if (imageData) {
+        elements.modalPreviewImage.src = imageData;
+    } else {
+        elements.modalPreviewImage.src = '';
+    }
     
-    // Check if invalid test
-    const isInvalid = result.is_invalid || !result.control_line_detected;
+    // Check if invalid test - with null safety
+    const controlLineDetected = result.control_line_detected !== undefined ? result.control_line_detected : true;
+    const isInvalid = result.is_invalid || !controlLineDetected;
+    
+    // Get quantitative data with null safety
+    const quantData = result.quantitative_data || {};
+    const controlLineValue = parseFloat(quantData.control_line) || 0;
+    const testLineValue = parseFloat(quantData.test_line) || 0;
+    const ratioTC = parseFloat(quantData.ratio_tc) || 0;
+    const decisionMethod = result.decision_method || 'AI_Agreement';
+    const inputType = result.input_type || 'Direct Upload';
+    const threshold = result.threshold || 0.5;
     
     if (isInvalid) {
         // Invalid test display
         elements.modalResultBadge.className = 'result-badge invalid';
         elements.modalResultIcon.className = 'bi bi-exclamation-triangle-fill';
         elements.modalResultStatus.textContent = 'INVALID TEST';
-        elements.modalResultMessage.textContent = result.error_message || 'This test strip could not be analyzed';
+        if (elements.modalResultMessage) elements.modalResultMessage.textContent = result.error_message || 'This test strip could not be analyzed';
         
         // Override metrics
         elements.modalConfidenceValue.textContent = '0%';
@@ -1078,10 +1223,12 @@ function showResultsModal(result, imageData) {
         elements.modalIntensityBar.style.width = '0%';
         elements.modalIntensityBar.className = 'progress-bar bg-secondary';
         
-        elements.modalThresholdValue.textContent = (result.threshold * 100).toFixed(0) + '%';
-        elements.modalTimeValue.textContent = result.analysis_time ? result.analysis_time.toFixed(2) + 's' : 'N/A';
+        elements.modalThresholdValue.textContent = (threshold * 100).toFixed(0) + '%';
+        elements.modalTimeValue.textContent = result.processing_time_ms ? (typeof result.processing_time_ms === 'number' ? result.processing_time_ms.toFixed(0) : result.processing_time_ms) + ' ms' : 'N/A';
         
         // Override details
+        if (elements.modalDecisionMethod) elements.modalDecisionMethod.textContent = 'N/A';
+        if (elements.modalInputType) elements.modalInputType.textContent = inputType;
         elements.modalControlLine.textContent = 'Not Detected';
         elements.modalTestLine.textContent = 'N/A';
         elements.modalIntensityScore.textContent = 'N/A';
@@ -1091,49 +1238,80 @@ function showResultsModal(result, imageData) {
         elements.modalMedicalGuidance.className = 'medical-guidance warning';
         elements.modalGuidanceText.textContent = 'Please upload a clear image of a valid test strip. Ensure the entire test strip is visible with the control line clearly shown.';
     } else {
-        // Valid test display
-        const confidence = result.confidence * 100;
-        const isPositive = result.is_positive;
+        // Valid test display - use diagnosis from server
+        const isPositive = result.diagnosis === 'Positive' || result.is_positive;
+        const confidence = (result.confidence || 0) * 100;
         
         // Result badge
         elements.modalResultBadge.className = `result-badge ${isPositive ? 'positive' : 'negative'}`;
         elements.modalResultIcon.className = isPositive ? 'bi bi-exclamation-circle-fill' : 'bi bi-check-circle-fill';
         elements.modalResultStatus.textContent = isPositive ? 'POSITIVE' : 'NEGATIVE';
+        if (elements.modalResultMessage) elements.modalResultMessage.textContent = formatDecisionMethod(decisionMethod);
         
-        // Metrics
-        const intensity = calculateLineIntensity(result);
+        // Metrics - use quantitative data
+        const intensity = Math.min(testLineValue * 5, 100);
         const intensityCategory = getIntensityCategory(intensity);
         
         elements.modalConfidenceValue.textContent = confidence.toFixed(1) + '%';
         elements.modalConfidenceBar.style.width = confidence + '%';
-        elements.modalConfidenceBar.className = `progress-bar ${getConfidenceClass(confidence)}`;
+        elements.modalConfidenceBar.className = `progress-bar ${getConfidenceClass(confidence / 100)}`;
         
         elements.modalIntensityValue.textContent = intensity.toFixed(0) + '%';
         elements.modalIntensityBar.style.width = intensity + '%';
         elements.modalIntensityBar.className = `progress-bar ${getIntensityClass(intensity)}`;
         
-        elements.modalThresholdValue.textContent = (result.threshold * 100).toFixed(0) + '%';
-        elements.modalTimeValue.textContent = result.analysis_time ? result.analysis_time.toFixed(2) + 's' : 'N/A';
+        elements.modalThresholdValue.textContent = (threshold * 100).toFixed(0) + '%';
+        elements.modalTimeValue.textContent = result.processing_time_ms ? (typeof result.processing_time_ms === 'number' ? result.processing_time_ms.toFixed(0) : result.processing_time_ms) + ' ms' : 'N/A';
         
-        // Details
-        elements.modalControlLine.textContent = detectControlLine(result) ? 'Detected ✓' : 'Not Detected';
-        elements.modalTestLine.textContent = result.test_line_detected ? 'Detected ✓' : 'Not Detected';
-        elements.modalIntensityScore.textContent = `${intensity.toFixed(0)}% (${intensityCategory})`;
-        elements.modalQualityAssessment.textContent = assessImageQuality(result);
+        // Detailed Analysis with quantitative data
+        if (elements.modalDecisionMethod) elements.modalDecisionMethod.textContent = formatDecisionMethod(decisionMethod);
+        if (elements.modalInputType) elements.modalInputType.textContent = inputType;
         
-        // Medical guidance
+        elements.modalControlLine.textContent = controlLineValue > 0 
+            ? `✓ ${controlLineValue.toFixed(2)} intensity` 
+            : 'Not Detected';
+        
+        elements.modalTestLine.textContent = testLineValue > 3.0 
+            ? `✓ ${testLineValue.toFixed(2)} intensity` 
+            : testLineValue > 0 
+                ? `○ ${testLineValue.toFixed(2)} (weak)` 
+                : 'Not Detected';
+        
+        elements.modalIntensityScore.textContent = `${testLineValue.toFixed(2)} (T/C: ${ratioTC.toFixed(4)})`;
+        elements.modalQualityAssessment.textContent = result.quality || assessImageQuality(result);
+        
+        // Medical guidance with decision method context
         if (isPositive) {
             elements.modalMedicalGuidance.className = 'medical-guidance danger';
-            if (intensity >= 70) {
-                elements.modalGuidanceText.textContent = 'Strong positive result detected. Please consult a healthcare professional immediately for confirmation and treatment options.';
-            } else if (intensity >= 40) {
-                elements.modalGuidanceText.textContent = 'Moderate positive result. Medical consultation recommended for confirmation and appropriate care.';
-            } else {
-                elements.modalGuidanceText.textContent = 'Weak positive result detected. Consider retesting and consult a healthcare professional for confirmation.';
+            let guidanceText = '';
+            switch (decisionMethod) {
+                case 'Confirmed_Positive':
+                    guidanceText = `Strong positive confirmed by both AI (${confidence.toFixed(1)}%) and quantitative analysis (test line: ${testLineValue.toFixed(2)}). Seek immediate medical consultation.`;
+                    break;
+                case 'AI_Rescued_Faint_Line':
+                    guidanceText = `Faint positive detected. AI confidence is high (${confidence.toFixed(1)}%) with weak line signal (${testLineValue.toFixed(2)}). Consider retesting and consult a healthcare professional.`;
+                    break;
+                case 'Signal_Override':
+                    guidanceText = `Positive detected by strong test line signal (${testLineValue.toFixed(2)}). The line is clearly visible. Please consult a healthcare professional.`;
+                    break;
+                default:
+                    guidanceText = `Positive result detected. Line intensity: ${testLineValue.toFixed(2)}. Medical consultation recommended.`;
             }
+            elements.modalGuidanceText.textContent = guidanceText;
         } else {
             elements.modalMedicalGuidance.className = 'medical-guidance success';
-            elements.modalGuidanceText.textContent = 'Negative result. If symptoms persist or you have concerns, please consult a healthcare professional.';
+            let guidanceText = '';
+            switch (decisionMethod) {
+                case 'Confirmed_Negative':
+                    guidanceText = `Negative confirmed. Both AI and quantitative analysis show no significant test line. Monitor for symptoms.`;
+                    break;
+                case 'Quantifier_Veto':
+                    guidanceText = `Negative result. AI showed some signal but quantitative analysis confirmed no visible line. Result is likely negative.`;
+                    break;
+                default:
+                    guidanceText = 'Negative result. If symptoms persist or you have concerns, please consult a healthcare professional.';
+            }
+            elements.modalGuidanceText.textContent = guidanceText;
         }
     }
     

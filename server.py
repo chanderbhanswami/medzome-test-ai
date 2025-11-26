@@ -3,6 +3,11 @@
 Medzome Flask Backend Server
 Supports TFLite, Keras (.keras), and HDF5 (.h5) models
 Universal model serving with maximum capability utilization
+
+Now includes:
+- LFAQuantifier integration for accurate line intensity detection
+- Smart crop functionality for auto-detection from raw photos
+- Hybrid decision logic (AI + Quantitative analysis)
 """
 
 import os
@@ -35,12 +40,30 @@ except ImportError:
     TFLITE_RUNTIME_AVAILABLE = False
     print("⚠️  TFLite runtime not found")
 
+# LFAQuantifier import (for accurate line intensity detection)
+try:
+    from lfa_quantifier import LFAQuantifier
+    QUANTIFIER_AVAILABLE = True
+    print("✅ LFAQuantifier available")
+except ImportError:
+    QUANTIFIER_AVAILABLE = False
+    print("⚠️  LFAQuantifier not found - quantitative analysis disabled")
+
+# SciPy for signal processing (used by LFAQuantifier)
+try:
+    from scipy.signal import find_peaks
+    SCIPY_AVAILABLE = True
+except ImportError:
+    SCIPY_AVAILABLE = False
+    print("⚠️  SciPy not found - some analysis features may be limited")
+
 # ============================================================================
 # Configuration
 # ============================================================================
 
 class Config:
-    MODEL_PATH = os.environ.get('MODEL_PATH', 'medzome_mvp_model.tflite')
+    # Changed default to Keras model for better accuracy with quantitative analysis
+    MODEL_PATH = os.environ.get('MODEL_PATH', 'medzome_final_model.keras')
     INPUT_HEIGHT = 384
     INPUT_WIDTH = 128
     INPUT_CHANNELS = 3
@@ -56,11 +79,23 @@ class Config:
             'threshold': 0.4,  # Lower threshold for EfficientNet
             'invert_prediction': False
         },
+        'medzome_final_model.keras': {
+            'threshold': 0.5,  # Optimal threshold for final model
+            'invert_prediction': False,
+            'use_quantifier': True  # Enable LFAQuantifier for this model
+        },
         'default': {
             'threshold': 0.5,
             'invert_prediction': False
         }
     }
+    
+    # Hybrid decision thresholds (from final_inference.py)
+    STRONG_POSITIVE_AI_THRESHOLD = 0.7
+    STRONG_POSITIVE_INTENSITY_THRESHOLD = 3.0
+    FAINT_POSITIVE_AI_THRESHOLD = 0.95
+    FAINT_POSITIVE_INTENSITY_THRESHOLD = 1.5
+    SIGNAL_OVERRIDE_INTENSITY_THRESHOLD = 20.0
 
 config = Config()
 
@@ -274,6 +309,308 @@ class UniversalModelLoader:
         }
 
 # ============================================================================
+# Smart Crop Processor (from final_inference.py)
+# ============================================================================
+
+class SmartCropProcessor:
+    """
+    Smart cropping to find and isolate test strips from raw photos.
+    Matches Training Logic to ensure AI accuracy.
+    """
+    
+    @staticmethod
+    def smart_crop(img: np.ndarray) -> Tuple[np.ndarray, bool]:
+        """
+        Robust cropping to find the strip from raw photos.
+        Matches Training Logic (Full Width) to ensure AI accuracy.
+        
+        Args:
+            img: BGR image (OpenCV format)
+            
+        Returns:
+            Tuple of (cropped_image, was_cropped)
+        """
+        try:
+            # 1. Find the Anchor (Black ColorChecker Card)
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+            _, binary = cv2.threshold(gray, 80, 255, cv2.THRESH_BINARY_INV)
+            
+            contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            if not contours:
+                return img, False  # No anchor found
+            
+            # Find largest dark object (The Card)
+            card_contour = max(contours, key=cv2.contourArea)
+            if cv2.contourArea(card_contour) < 5000:
+                return img, False
+            
+            x, y, w, h = cv2.boundingRect(card_contour)
+            
+            # 2. Define Search Zone (Strictly Right of Card)
+            h_img, w_img = img.shape[:2]
+            zone_x = x + w + 20
+            zone_y = max(0, y - 50)
+            zone_h = h + 100
+            
+            if zone_x >= w_img:
+                return img, False
+            
+            search_zone = img[zone_y:min(h_img, zone_y + zone_h), zone_x:min(w_img, zone_x + 600)]
+            
+            if search_zone.size == 0:
+                return img, False
+            
+            # 3. Find the White Strip inside the zone
+            zone_gray = cv2.cvtColor(search_zone, cv2.COLOR_BGR2GRAY)
+            thresh = cv2.adaptiveThreshold(zone_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                           cv2.THRESH_BINARY_INV, 15, 4)
+            
+            strip_cnts, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            
+            best_crop = None
+            max_area = 0
+            
+            for cnt in strip_cnts:
+                area = cv2.contourArea(cnt)
+                if area > 3000:  # Must be substantial size
+                    sx, sy, sw, sh = cv2.boundingRect(cnt)
+                    aspect = float(sh) / sw if sw > 0 else 0
+                    
+                    # LFA Strip Physics: Tall and Thin (Ratio 2.0 to 6.0)
+                    if 2.0 < aspect < 6.0:
+                        if area > max_area:
+                            max_area = area
+                            # Capture Full Width (Matches Training Data)
+                            best_crop = search_zone[sy:sy + sh, sx:sx + sw]
+            
+            if best_crop is not None:
+                return best_crop, True
+            
+            return img, False
+            
+        except Exception as e:
+            print(f"⚠️  Smart crop failed: {e}")
+            return img, False
+    
+    @staticmethod
+    def decode_base64_to_cv2(image_data: str) -> np.ndarray:
+        """Decode base64 image to OpenCV BGR format"""
+        image_bytes = base64.b64decode(image_data.split(',')[1])
+        image_array = np.frombuffer(image_bytes, dtype=np.uint8)
+        return cv2.imdecode(image_array, cv2.IMREAD_COLOR)
+
+
+# ============================================================================
+# LFA Quantifier Wrapper
+# ============================================================================
+
+class LFAQuantifierWrapper:
+    """
+    Wrapper for LFAQuantifier to work with in-memory images.
+    Provides quantitative analysis of test strips.
+    """
+    
+    def __init__(self):
+        if QUANTIFIER_AVAILABLE:
+            self.quantifier = LFAQuantifier()
+        else:
+            self.quantifier = None
+    
+    def process_strip_from_array(self, img: np.ndarray) -> Dict[str, Any]:
+        """
+        Process strip image directly from numpy array.
+        Implements the same logic as lfa_quantifier.py for in-memory processing.
+        
+        Args:
+            img: BGR image (OpenCV format)
+            
+        Returns:
+            Dictionary with control_intensity, test_intensity, ratio, and result
+        """
+        if img is None:
+            return {"error": "Image not found", "result": "Error", 
+                    "control_intensity": 0.0, "test_intensity": 0.0, "ratio": 0.0}
+        
+        try:
+            h, w = img.shape[:2]
+            
+            # 1. Wider Crop (30% to 70%) to ensure we don't miss off-center lines
+            center_crop = img[10:h-10, int(w*0.30):int(w*0.70)]
+            
+            # 2. Invert Green Channel (Lines become bright)
+            b, g, r = cv2.split(center_crop)
+            signal = 255 - g
+            
+            # 3. Create Profile
+            profile = np.mean(signal, axis=1)
+            profile_len = len(profile)  # Actual profile length (after vertical crop)
+            
+            # 4. Find Control Line (The strongest peak in top half)
+            # Use profile_len for calculations to avoid index out of bounds
+            top_half_profile = profile[:int(profile_len * 0.6)]
+            
+            results = {
+                "control_intensity": 0.0,
+                "test_intensity": 0.0,
+                "ratio": 0.0,
+                "result": "Invalid"
+            }
+            
+            # Find Control Peak using scipy if available
+            if SCIPY_AVAILABLE:
+                c_peaks, _ = find_peaks(top_half_profile, height=20, distance=20)
+            else:
+                # Fallback: simple peak detection
+                c_peaks = self._simple_peak_detection(top_half_profile, threshold=20)
+            
+            if len(c_peaks) > 0:
+                # Pick the tallest peak as Control
+                c_pos = c_peaks[np.argmax(top_half_profile[c_peaks])]
+                c_intensity = float(profile[c_pos])
+                results['control_intensity'] = c_intensity
+                
+                # 5. Targeted Test Line Search
+                start_search = c_pos + 60
+                end_search = min(c_pos + 160, profile_len)  # Use profile_len to avoid overflow
+                
+                if start_search < end_search:
+                    test_zone = profile[start_search:end_search]
+                    
+                    # Look for the MAXIMUM signal in this zone
+                    max_signal_idx = np.argmax(test_zone)
+                    max_signal = test_zone[max_signal_idx]
+                    
+                    # Calculate local background (min value in the zone)
+                    background = np.min(test_zone)
+                    true_intensity = float(max_signal - background)
+                    
+                    results['test_intensity'] = max(0.0, true_intensity)
+                    
+                    # Decision Logic
+                    if results['test_intensity'] > 3.0:
+                        results['result'] = "Positive"
+                    else:
+                        results['result'] = "Negative"
+                    
+                    if c_intensity > 0:
+                        results['ratio'] = results['test_intensity'] / c_intensity
+            
+            return results
+            
+        except Exception as e:
+            print(f"⚠️  Quantifier analysis failed: {e}")
+            return {
+                "control_intensity": 0.0,
+                "test_intensity": 0.0,
+                "ratio": 0.0,
+                "result": "Error",
+                "error": str(e)
+            }
+    
+    def _simple_peak_detection(self, profile: np.ndarray, threshold: float = 20, distance: int = 20) -> np.ndarray:
+        """Simple peak detection fallback when scipy is not available"""
+        peaks = []
+        for i in range(distance, len(profile) - distance):
+            if profile[i] > threshold:
+                # Check if it's a local maximum
+                is_peak = True
+                for j in range(1, distance + 1):
+                    if profile[i] <= profile[i - j] or profile[i] <= profile[i + j]:
+                        is_peak = False
+                        break
+                if is_peak:
+                    peaks.append(i)
+        return np.array(peaks)
+
+
+# ============================================================================
+# Hybrid Decision Engine (from final_inference.py)
+# ============================================================================
+
+class HybridDecisionEngine:
+    """
+    Hybrid decision logic combining AI confidence with quantitative analysis.
+    
+    CRITICAL INSIGHT: The quantifier directly measures physical line presence.
+    If quantifier says NO visible line (intensity < threshold), trust it over AI.
+    AI can hallucinate, but physics doesn't lie.
+    
+    Test line intensity thresholds (based on inverted green channel signal):
+    - < 5.0: No visible line (background noise)
+    - 5.0-15.0: Very faint/questionable
+    - 15.0-30.0: Faint but visible
+    - > 30.0: Clearly visible line
+    """
+    
+    # Minimum test line intensity to consider it "present"
+    MIN_VISIBLE_LINE_INTENSITY = 15.0  # Below this, treat as no line
+    
+    @staticmethod
+    def make_decision(ai_score: float, quantitative_data: Dict[str, Any]) -> Dict[str, str]:
+        """
+        Make hybrid decision based on AI score and quantitative analysis.
+        
+        PRIORITY: Physical measurement (quantifier) > AI prediction
+        
+        Args:
+            ai_score: AI model confidence (0-1)
+            quantitative_data: Results from LFAQuantifier
+            
+        Returns:
+            Dictionary with diagnosis and decision_method
+        """
+        test_intensity = quantitative_data.get('test_intensity', 0.0)
+        control_intensity = quantitative_data.get('control_intensity', 0.0)
+        ratio = quantitative_data.get('ratio', 0.0)
+        
+        final_status = "Negative"
+        method = "AI_Agreement"
+        
+        # CRITICAL CHECK: If test line intensity is below minimum visible threshold,
+        # the test is NEGATIVE regardless of what AI says
+        # This prevents AI hallucinations from causing false positives
+        if test_intensity < HybridDecisionEngine.MIN_VISIBLE_LINE_INTENSITY:
+            final_status = "Negative"
+            if ai_score > 0.5:
+                method = "Quantifier_Veto"  # AI said positive, but no visible line
+            else:
+                method = "Confirmed_Negative"  # Both agree it's negative
+            return {
+                "diagnosis": final_status,
+                "decision_method": method
+            }
+        
+        # If we reach here, test_intensity >= MIN_VISIBLE_LINE_INTENSITY (line is visible)
+        
+        # 1. Strong Positive: AI is sure (>70%) AND line is clearly visible (>15)
+        if ai_score > config.STRONG_POSITIVE_AI_THRESHOLD and test_intensity >= HybridDecisionEngine.MIN_VISIBLE_LINE_INTENSITY:
+            final_status = "Positive"
+            method = "Confirmed_Positive"
+        
+        # 2. Faint Positive: AI is VERY sure (>95%) AND we see some signal
+        elif ai_score > config.FAINT_POSITIVE_AI_THRESHOLD and test_intensity > 5.0:
+            final_status = "Positive"
+            method = "AI_Rescued_Faint_Line"
+        
+        # 3. Signal Override: Very strong physical signal AND significant ratio
+        #    Only for cases where line is undeniably present
+        elif test_intensity > 30.0 and ratio > 0.20 and ai_score > 0.3:
+            final_status = "Positive"
+            method = "Signal_Override"
+        
+        # 4. Default to Negative if nothing triggered
+        else:
+            final_status = "Negative"
+            method = "Confirmed_Negative"
+        
+        return {
+            "diagnosis": final_status,
+            "decision_method": method
+        }
+
+
+# ============================================================================
 # Image Processing
 # ============================================================================
 
@@ -319,6 +656,40 @@ class ImageProcessor:
         
         # Normalize to [0, 1]
         image = image.astype(np.float32) / 255.0
+        
+        # Add batch dimension
+        image = np.expand_dims(image, axis=0)
+        
+        return image
+    
+    @staticmethod
+    def preprocess_for_keras(image: np.ndarray, target_height: int = None, target_width: int = None) -> np.ndarray:
+        """
+        Preprocess image for Keras/MobileNetV2 model.
+        Uses the same normalization as training: (img / 127.5) - 1.0 (range -1 to 1)
+        
+        Args:
+            image: BGR image (OpenCV format)
+            target_height: Target height (default from config)
+            target_width: Target width (default from config)
+            
+        Returns:
+            Preprocessed image with batch dimension
+        """
+        if target_height is None:
+            target_height = config.INPUT_HEIGHT
+        if target_width is None:
+            target_width = config.INPUT_WIDTH
+        
+        # Resize
+        image = cv2.resize(image, (target_width, target_height))
+        
+        # Convert BGR to RGB
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        
+        # Normalize to [-1, 1] for MobileNetV2
+        image = image.astype(np.float32)
+        image = (image / 127.5) - 1.0
         
         # Add batch dimension
         image = np.expand_dims(image, axis=0)
@@ -378,8 +749,15 @@ class ImageProcessor:
             profile = np.mean(blurred, axis=1)
             
             # Find peaks (lines)
-            from scipy.signal import find_peaks
-            peaks, properties = find_peaks(-profile, distance=20, prominence=10)
+            if SCIPY_AVAILABLE:
+                peaks, properties = find_peaks(-profile, distance=20, prominence=10)
+            else:
+                # Simple fallback peak detection
+                peaks = []
+                for i in range(20, len(profile) - 20):
+                    if -profile[i] > -profile[i-1] and -profile[i] > -profile[i+1]:
+                        peaks.append(i)
+                peaks = np.array(peaks[:5])  # Limit to first 5 peaks
             
             # Classify peaks as control/test lines
             control_line = None
@@ -561,8 +939,9 @@ def health_check():
 @app.route('/predict', methods=['POST'])
 def predict():
     """
-    Main prediction endpoint.
-    Accepts base64 image and returns analysis results.
+    Main prediction endpoint with hybrid decision logic.
+    Accepts base64 image and returns comprehensive analysis results
+    including quantitative data and decision method (like final_inference.py).
     """
     
     try:
@@ -581,51 +960,98 @@ def predict():
         # Start timing
         start_time = time.time()
         
+        # Decode original image for processing
+        original_image = SmartCropProcessor.decode_base64_to_cv2(image_data)
+        
+        if original_image is None:
+            return jsonify({'error': 'Failed to decode image'}), 400
+        
+        # --- STEP 0: SMART CROP (Auto-Detection) ---
+        cropped_image, was_cropped = SmartCropProcessor.smart_crop(original_image)
+        input_type = "Raw Photo (Auto-Cropped)" if was_cropped else "Direct Upload"
+        
+        # Use cropped image for analysis
+        analysis_image = cropped_image if was_cropped else original_image
+        
+        # --- STEP 1: QUANTITATIVE ANALYSIS using LFAQuantifier ---
+        quantifier = LFAQuantifierWrapper()
+        quantitative_data = quantifier.process_strip_from_array(analysis_image)
+        
+        print(f"   Quantitative Analysis: control={quantitative_data['control_intensity']:.2f}, test={quantitative_data['test_intensity']:.2f}")
+        
+        # --- STEP 2: AI INFERENCE ---
         # Get model's required input dimensions
         height, width, channels = model_loader.get_input_shape()
         
-        # Preprocess image with model-specific dimensions
-        processed_image = ImageProcessor.preprocess_image(image_data, height, width)
+        # Preprocess image for Keras model (uses -1 to 1 normalization for MobileNetV2)
+        if model_loader.model_type in ['keras', 'h5']:
+            processed_image = ImageProcessor.preprocess_for_keras(analysis_image, height, width)
+        else:
+            # For TFLite, use standard 0-1 normalization
+            # Resize and convert
+            resized = cv2.resize(analysis_image, (width, height))
+            rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
+            processed_image = rgb.astype(np.float32) / 255.0
+            processed_image = np.expand_dims(processed_image, axis=0)
         
         # Run inference
         prediction = model_loader.predict(processed_image)
+        ai_score = prediction['confidence']
         
-        # Detect lines (for semi-quantitative analysis)
-        # Decode image for line detection
-        image_bytes = base64.b64decode(image_data.split(',')[1])
-        image_array = np.frombuffer(image_bytes, dtype=np.uint8)
-        original_image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
-        original_image = cv2.cvtColor(original_image, cv2.COLOR_BGR2RGB)
+        print(f"   AI Score: {ai_score:.4f}")
         
-        line_data = ImageProcessor.detect_lines(original_image)
+        # --- STEP 3: HYBRID DECISION LOGIC ---
+        decision = HybridDecisionEngine.make_decision(ai_score, quantitative_data)
+        diagnosis = decision['diagnosis']
+        decision_method = decision['decision_method']
         
-        # Analyze results
-        analysis = ResultAnalyzer.analyze(prediction['confidence'], line_data)
+        print(f"   Decision: {diagnosis} (method: {decision_method})")
+        
+        # Detect lines using original method for backward compatibility
+        original_rgb = cv2.cvtColor(analysis_image, cv2.COLOR_BGR2RGB)
+        line_data = ImageProcessor.detect_lines(original_rgb)
         
         # Calculate processing time
         processing_time = (time.time() - start_time) * 1000  # ms
         
-        # Build response
+        # Build response matching final_inference.py output
         response = {
             'success': True,
-            'confidence': analysis['confidence'],
-            'is_positive': analysis['is_positive'],
-            'is_invalid': analysis.get('is_invalid', False),  # Add invalid flag
-            'intensity_score': analysis['intensity_score'],
-            'intensity_category': analysis['intensity_category'],
-            'quality': analysis['quality'],
-            'threshold': analysis['threshold'],
-            'control_line_detected': line_data['control_line'] is not None,
-            'test_line_detected': line_data['test_line'] is not None,
+            
+            # Primary result
+            'diagnosis': diagnosis,
+            'is_positive': diagnosis == "Positive",
+            'decision_method': decision_method,
+            'input_type': input_type,
+            
+            # AI confidence
+            'confidence': ai_score,
+            'confidence_score': f"{ai_score:.4f}",
+            
+            # Quantitative data (matching final_inference.py format)
+            'quantitative_data': {
+                'control_line': f"{quantitative_data['control_intensity']:.2f}",
+                'test_line': f"{quantitative_data['test_intensity']:.2f}",
+                'ratio_tc': f"{quantitative_data.get('ratio', 0):.4f}"
+            },
+            
+            # Backward compatibility fields
+            'control_line_detected': quantitative_data['control_intensity'] > 0,
+            'test_line_detected': quantitative_data['test_intensity'] > config.STRONG_POSITIVE_INTENSITY_THRESHOLD,
             'num_lines_detected': line_data['num_lines'],
+            
+            # Legacy analysis fields
+            'is_invalid': quantitative_data.get('result') == "Error",
+            'intensity_score': min(quantitative_data['test_intensity'] * 5, 100),  # Scale for display
+            'intensity_category': ResultAnalyzer._categorize_intensity(min(quantitative_data['test_intensity'] * 5, 100)),
+            'quality': ResultAnalyzer._assess_quality(ai_score, line_data),
+            'threshold': config.CONFIDENCE_THRESHOLD,
+            
+            # Processing info
             'processing_time_ms': processing_time,
             'model_type': model_loader.model_type,
             'timestamp': time.time()
         }
-        
-        # Add error message if invalid
-        if analysis.get('is_invalid'):
-            response['error_message'] = analysis.get('error_message', 'Invalid test strip')
         
         return jsonify(response)
         

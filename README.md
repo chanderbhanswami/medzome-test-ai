@@ -312,6 +312,7 @@ medzome_test_ai/
 ├── app.js                    # Frontend logic, API calls, UI state
 ├── server.py                 # Flask backend, model inference, API endpoints
 ├── requirements.txt          # Python dependencies
+├── medzome_final_model.keras # AI model
 ├── medzome_mvp_model.tflite  # AI model
 ├── render.yaml               # render blueprint deployment
 ├── logo.png                  # Branding/logo (header and favicon)

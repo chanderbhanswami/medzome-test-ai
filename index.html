@@ -219,6 +219,14 @@
                             <div class="analysis-details">
                                 <h5><i class="bi bi-clipboard-pulse"></i> Detailed Analysis</h5>
                                 <div class="detail-item">
+                                    <span class="detail-label">Decision Method:</span>
+                                    <span id="decisionMethod" class="detail-value">-</span>
+                                </div>
+                                <div class="detail-item">
+                                    <span class="detail-label">Input Type:</span>
+                                    <span id="inputType" class="detail-value">-</span>
+                                </div>
+                                <div class="detail-item">
                                     <span class="detail-label">Control Line:</span>
                                     <span id="controlLine" class="detail-value">-</span>
                                 </div>
@@ -227,7 +235,7 @@
                                     <span id="testLine" class="detail-value">-</span>
                                 </div>
                                 <div class="detail-item">
-                                    <span class="detail-label">Intensity Score:</span>
+                                    <span class="detail-label">Intensity (T/C Ratio):</span>
                                     <span id="intensityScore" class="detail-value">-</span>
                                 </div>
                                 <div class="detail-item">
@@ -359,6 +367,7 @@
                 <div id="modalResultBadge" class="result-badge">
                     <i id="modalResultIcon" class="bi bi-check-circle-fill"></i>
                     <h2 id="modalResultStatus">NEGATIVE</h2>
+                    <p id="modalResultMessage" class="result-message">No test line detected</p>
                 </div>
                 
                 <!-- Metrics Grid -->
@@ -399,6 +408,14 @@
                 <div class="analysis-details">
                     <h5><i class="bi bi-info-circle"></i> Detailed Analysis</h5>
                     <div class="detail-item">
+                        <span class="detail-label">Decision Method:</span>
+                        <span class="detail-value" id="modalDecisionMethod">-</span>
+                    </div>
+                    <div class="detail-item">
+                        <span class="detail-label">Input Type:</span>
+                        <span class="detail-value" id="modalInputType">-</span>
+                    </div>
+                    <div class="detail-item">
                         <span class="detail-label">Control Line:</span>
                         <span class="detail-value" id="modalControlLine">Not Detected</span>
                     </div>
@@ -407,7 +424,7 @@
                         <span class="detail-value" id="modalTestLine">Not Detected</span>
                     </div>
                     <div class="detail-item">
-                        <span class="detail-label">Intensity Score:</span>
+                        <span class="detail-label">Intensity (T/C Ratio):</span>
                         <span class="detail-value" id="modalIntensityScore">N/A</span>
                     </div>
                     <div class="detail-item">

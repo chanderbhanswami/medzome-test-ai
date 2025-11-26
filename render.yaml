@@ -12,5 +12,5 @@ services:
       - key: PYTHON_VERSION
         value: "3.10.12"
       - key: MODEL_PATH
-        value: "medzome_mvp_model.tflite"
+        value: "medzome_final_model.keras"
     healthCheckPath: /health
