@@ -817,6 +817,25 @@ function saveToHistory(result, imageData) {
     // Use the server's diagnosis decision (hybrid logic) instead of just confidence
     const isPositive = result.diagnosis === 'Positive' || result.is_positive === true;
     
+    // Compress image for storage (reduce size to avoid quota issues)
+    let compressedImage = imageData;
+    try {
+        // Create a smaller thumbnail for history storage
+        const canvas = document.createElement('canvas');
+        const img = new Image();
+        img.src = imageData;
+        // Use smaller dimensions for storage
+        const maxSize = 200;
+        const scale = Math.min(maxSize / img.width, maxSize / img.height, 1);
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+        const ctx = canvas.getContext('2d');
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        compressedImage = canvas.toDataURL('image/jpeg', 0.5);
+    } catch (e) {
+        console.warn('Could not compress image for history:', e);
+    }
+    
     const historyItem = {
         id: Date.now(),
         timestamp: new Date().toISOString(),
@@ -824,7 +843,7 @@ function saveToHistory(result, imageData) {
         confidence: result.confidence,
         intensity: calculateLineIntensity(result),
         processingTime: result.processingTime,
-        imageData: imageData,
+        imageData: compressedImage,
         result: result  // Save the complete result object for modal display
     };
     
@@ -834,13 +853,27 @@ function saveToHistory(result, imageData) {
     // Add new item at the beginning
     history.unshift(historyItem);
     
-    // Limit history to 50 items
-    if (history.length > 50) {
-        history = history.slice(0, 50);
+    // Limit history to 20 items (reduced from 50 to save space)
+    if (history.length > 20) {
+        history = history.slice(0, 20);
     }
     
-    // Save back to localStorage
-    localStorage.setItem(CONFIG.HISTORY_STORAGE_KEY, JSON.stringify(history));
+    // Save back to localStorage with error handling
+    try {
+        localStorage.setItem(CONFIG.HISTORY_STORAGE_KEY, JSON.stringify(history));
+    } catch (e) {
+        console.warn('LocalStorage quota exceeded, clearing old history');
+        // If still failing, clear old items and retry
+        history = history.slice(0, 5);
+        try {
+            localStorage.setItem(CONFIG.HISTORY_STORAGE_KEY, JSON.stringify(history));
+        } catch (e2) {
+            // Last resort: clear all history
+            localStorage.removeItem(CONFIG.HISTORY_STORAGE_KEY);
+            history = [historyItem];
+            localStorage.setItem(CONFIG.HISTORY_STORAGE_KEY, JSON.stringify(history));
+        }
+    }
     
     // Reload history display
     loadHistory();

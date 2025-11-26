@@ -384,8 +384,16 @@ class SmartCropProcessor:
                             # Capture Full Width (Matches Training Data)
                             best_crop = search_zone[sy:sy + sh, sx:sx + sw]
             
+            # CRITICAL: Validate crop dimensions
+            # Crop must be large enough to be a real strip (not noise)
+            # Minimum: 150 pixels height, 60 pixels width (real strips are bigger)
             if best_crop is not None:
-                return best_crop, True
+                crop_h, crop_w = best_crop.shape[:2]
+                if crop_h >= 150 and crop_w >= 60:
+                    return best_crop, True
+                else:
+                    print(f"   ⚠️ Crop too small ({crop_h}x{crop_w}), using original image")
+                    return img, False
             
             return img, False
             
@@ -531,27 +539,14 @@ class LFAQuantifierWrapper:
 class HybridDecisionEngine:
     """
     Hybrid decision logic combining AI confidence with quantitative analysis.
-    
-    CRITICAL INSIGHT: The quantifier directly measures physical line presence.
-    If quantifier says NO visible line (intensity < threshold), trust it over AI.
-    AI can hallucinate, but physics doesn't lie.
-    
-    Test line intensity thresholds (based on inverted green channel signal):
-    - < 5.0: No visible line (background noise)
-    - 5.0-15.0: Very faint/questionable
-    - 15.0-30.0: Faint but visible
-    - > 30.0: Clearly visible line
+    Matches the logic in final_inference.py exactly.
     """
-    
-    # Minimum test line intensity to consider it "present"
-    MIN_VISIBLE_LINE_INTENSITY = 15.0  # Below this, treat as no line
     
     @staticmethod
     def make_decision(ai_score: float, quantitative_data: Dict[str, Any]) -> Dict[str, str]:
         """
         Make hybrid decision based on AI score and quantitative analysis.
-        
-        PRIORITY: Physical measurement (quantifier) > AI prediction
+        Uses the same logic as final_inference.py.
         
         Args:
             ai_score: AI model confidence (0-1)
@@ -561,48 +556,38 @@ class HybridDecisionEngine:
             Dictionary with diagnosis and decision_method
         """
         test_intensity = quantitative_data.get('test_intensity', 0.0)
-        control_intensity = quantitative_data.get('control_intensity', 0.0)
-        ratio = quantitative_data.get('ratio', 0.0)
         
         final_status = "Negative"
         method = "AI_Agreement"
         
-        # CRITICAL CHECK: If test line intensity is below minimum visible threshold,
-        # the test is NEGATIVE regardless of what AI says
-        # This prevents AI hallucinations from causing false positives
-        if test_intensity < HybridDecisionEngine.MIN_VISIBLE_LINE_INTENSITY:
-            final_status = "Negative"
-            if ai_score > 0.5:
-                method = "Quantifier_Veto"  # AI said positive, but no visible line
-            else:
-                method = "Confirmed_Negative"  # Both agree it's negative
-            return {
-                "diagnosis": final_status,
-                "decision_method": method
-            }
+        # LOGIC GATES (same as final_inference.py)
         
-        # If we reach here, test_intensity >= MIN_VISIBLE_LINE_INTENSITY (line is visible)
-        
-        # 1. Strong Positive: AI is sure (>70%) AND line is clearly visible (>15)
-        if ai_score > config.STRONG_POSITIVE_AI_THRESHOLD and test_intensity >= HybridDecisionEngine.MIN_VISIBLE_LINE_INTENSITY:
+        # 1. Strong Positive: AI is sure (>70%) AND Intensity is clearly visible (>10.0)
+        #    Increased from 3.0 to 10.0 to avoid false positives from noise
+        if ai_score > 0.7 and test_intensity > 10.0:
             final_status = "Positive"
             method = "Confirmed_Positive"
-        
-        # 2. Faint Positive: AI is VERY sure (>95%) AND we see some signal
-        elif ai_score > config.FAINT_POSITIVE_AI_THRESHOLD and test_intensity > 5.0:
+            
+        # 2. Faint Positive: AI is VERY sure (>95%) AND we see a faint signal (>5.0)
+        #    Increased from 1.5 to 5.0 for more reliability
+        elif ai_score > 0.95 and test_intensity > 5.0:
             final_status = "Positive"
             method = "AI_Rescued_Faint_Line"
-        
-        # 3. Signal Override: Very strong physical signal AND significant ratio
-        #    Only for cases where line is undeniably present
-        elif test_intensity > 30.0 and ratio > 0.20 and ai_score > 0.3:
+            
+        # 3. Signal Override: AI missed it, but intensity is huge (>30.0)
+        #    IMPORTANT: Only override if AI is at least somewhat uncertain (> 0.3)
+        #    Increased from 20.0 to 30.0 for more reliability
+        elif test_intensity > 30.0 and ai_score > 0.3:
             final_status = "Positive"
             method = "Signal_Override"
-        
-        # 4. Default to Negative if nothing triggered
+            
+        # 4. Negative / Veto
         else:
             final_status = "Negative"
-            method = "Confirmed_Negative"
+            if ai_score > 0.5:
+                method = "Quantifier_Veto"  # AI hallucination blocked
+            else:
+                method = "Confirmed_Negative"
         
         return {
             "diagnosis": final_status,
@@ -972,6 +957,12 @@ def predict():
         
         # Use cropped image for analysis
         analysis_image = cropped_image if was_cropped else original_image
+        
+        # Debug: Log image dimensions
+        print(f"   Original image: {original_image.shape}")
+        print(f"   Was cropped: {was_cropped}")
+        if was_cropped:
+            print(f"   Cropped image: {analysis_image.shape}")
         
         # --- STEP 1: QUANTITATIVE ANALYSIS using LFAQuantifier ---
         quantifier = LFAQuantifierWrapper()
