@@ -24,6 +24,7 @@ const CONFIG = {
 
 let currentImage = null;
 let currentImageData = null;
+let currentImageName = null;
 let cameraStream = null;
 let analysisResults = null;
 
@@ -77,6 +78,7 @@ const elements = {
     decisionMethod: document.getElementById('decisionMethod'),
     inputType: document.getElementById('inputType'),
     ratioTC: document.getElementById('ratioTC'),
+    imageName: document.getElementById('imageName'),
     
     // Guidance
     medicalGuidance: document.getElementById('medicalGuidance'),
@@ -129,6 +131,7 @@ const elements = {
     modalGuidanceText: document.getElementById('modalGuidanceText'),
     modalDecisionMethod: document.getElementById('modalDecisionMethod'),
     modalInputType: document.getElementById('modalInputType'),
+    modalImageName: document.getElementById('modalImageName'),
     
     // History
     historyList: document.getElementById('historyList'),
@@ -268,6 +271,9 @@ function validateAndLoadFile(file) {
 function loadImageFile(file) {
     showUploadProgress();
     
+    // Store the image filename
+    currentImageName = file.name || 'Unknown';
+    
     const reader = new FileReader();
     
     reader.onprogress = (event) => {
@@ -371,6 +377,9 @@ function captureImage() {
 
 function useCapturedImage() {
     const imageData = elements.capturedImage.src;
+    
+    // Set image name for camera captures
+    currentImageName = 'Camera Capture';
     
     const img = new Image();
     img.onload = () => {
@@ -648,6 +657,11 @@ function displayResults(result) {
         elements.inputType.textContent = inputType;
     }
     
+    // Update image name display if element exists
+    if (elements.imageName) {
+        elements.imageName.textContent = currentImageName || 'Unknown';
+    }
+    
     // Update medical guidance with real data
     updateMedicalGuidance(isPositive, lineIntensity, intensityCategory, false, decisionMethod, testLineValue);
     
@@ -844,6 +858,7 @@ function saveToHistory(result, imageData) {
         intensity: calculateLineIntensity(result),
         processingTime: result.processingTime,
         imageData: compressedImage,
+        imageName: currentImageName || 'Unknown',
         result: result  // Save the complete result object for modal display
     };
     
@@ -930,7 +945,7 @@ function viewHistoryItem(id) {
     console.log('Viewing history item:', item);
     
     // Show results in modal
-    showResultsModal(item.result, item.imageData);
+    showResultsModal(item.result, item.imageData, item.imageName);
 }
 
 function clearHistory() {
@@ -1041,6 +1056,7 @@ function downloadReport() {
             doc.setFont(undefined, 'normal');
             
             const metrics = [
+                ['Image Name:', currentImageName || 'Unknown'],
                 ['Decision Method:', formatDecisionMethod(decisionMethod).replace(/[✓🔍📊⚖️🤖]/g, '').trim()],
                 ['Input Type:', inputType],
                 ['AI Confidence:', `${(analysisResults.confidence * 100).toFixed(1)}%`],
@@ -1249,8 +1265,8 @@ function showConfirmDialog(title, message, onConfirm) {
     });
 }
 
-function showResultsModal(result, imageData) {
-    console.log('showResultsModal called with:', { result, imageData });
+function showResultsModal(result, imageData, imageName) {
+    console.log('showResultsModal called with:', { result, imageData, imageName });
     
     if (!result) {
         console.error('No result provided to showResultsModal');
@@ -1300,6 +1316,7 @@ function showResultsModal(result, imageData) {
         // Override details
         if (elements.modalDecisionMethod) elements.modalDecisionMethod.textContent = 'N/A';
         if (elements.modalInputType) elements.modalInputType.textContent = inputType;
+        if (elements.modalImageName) elements.modalImageName.textContent = imageName || 'Unknown';
         elements.modalControlLine.textContent = 'Not Detected';
         elements.modalTestLine.textContent = 'N/A';
         elements.modalIntensityScore.textContent = 'N/A';
@@ -1337,6 +1354,7 @@ function showResultsModal(result, imageData) {
         // Detailed Analysis with quantitative data
         if (elements.modalDecisionMethod) elements.modalDecisionMethod.textContent = formatDecisionMethod(decisionMethod);
         if (elements.modalInputType) elements.modalInputType.textContent = inputType;
+        if (elements.modalImageName) elements.modalImageName.textContent = imageName || 'Unknown';
         
         elements.modalControlLine.textContent = controlLineValue > 0 
             ? `✓ ${controlLineValue.toFixed(2)} intensity` 
