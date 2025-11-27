@@ -925,10 +925,8 @@ def predict():
     """
     Main prediction endpoint with hybrid decision logic.
     EXACTLY matches final_inference.py workflow:
-    1. Smart crop
-    2. Save to temp file (for JPEG compression consistency)
-    3. Reload from file for both quantifier AND AI
-    4. Hybrid decision
+    - If cropped: Save to JPEG temp file, then read back (JPEG compression)
+    - If not cropped: Use original image directly (no JPEG re-encoding)
     """
     
     TEMP_CROP_PATH = 'temp_autocrop.jpg'
@@ -965,55 +963,112 @@ def predict():
         if was_cropped:
             print(f"   Cropped image: {cropped_image.shape}")
         
-        # --- CRITICAL: Save to temp file to match final_inference.py exactly ---
-        # final_inference.py saves cropped image to JPEG and reloads it
-        # This JPEG compression affects pixel values slightly
-        # We must do the same to get identical results
+        # --- CRITICAL: Match final_inference.py behavior exactly ---
+        # final_inference.py:
+        #   if was_cropped: save to JPEG, read back
+        #   else: use original file path directly (no re-encoding)
+        # 
+        # For web uploads, we don't have a file path, but we have the decoded image
+        # which is equivalent to cv2.imread(original_path)
         
         if was_cropped:
-            # Save cropped image to temp file (like final_inference.py)
+            # Save cropped image to JPEG temp file (like final_inference.py)
             cv2.imwrite(TEMP_CROP_PATH, cropped_image)
-            analysis_path = TEMP_CROP_PATH
+            # Read back for quantifier (JPEG compression applied)
+            analysis_image = cv2.imread(TEMP_CROP_PATH)
+            used_temp_file = True
         else:
-            # Save original to temp file for consistency
-            cv2.imwrite(TEMP_CROP_PATH, original_image)
-            analysis_path = TEMP_CROP_PATH
+            # Use original image directly (no JPEG re-encoding)
+            # This matches: analysis_path = image_path in final_inference.py
+            analysis_image = original_image
+            used_temp_file = False
         
-        # --- STEP 1: QUANTITATIVE ANALYSIS - Use file path like final_inference.py ---
-        # final_inference.py calls: q_metrics = self.quantifier.process_strip(analysis_path)
-        # We must do the same (read from file, not in-memory array)
-        if QUANTIFIER_AVAILABLE:
-            quantifier = LFAQuantifier()
-            quantitative_data = quantifier.process_strip(analysis_path)
+        # --- STEP 1: QUANTITATIVE ANALYSIS ---
+        # Process in-memory to match what final_inference.py does after cv2.imread
+        h, w = analysis_image.shape[:2]
+        
+        # Wider Crop (30% to 70%) to ensure we don't miss off-center lines
+        center_crop = analysis_image[10:h-10, int(w*0.30):int(w*0.70)]
+        
+        # Invert Green Channel (Lines become bright)
+        b, g, r = cv2.split(center_crop)
+        signal = 255 - g
+        
+        # Create Profile
+        profile = np.mean(signal, axis=1)
+        
+        # Find Control Line (The strongest peak in top half)
+        # IMPORTANT: Use original h (not profile length) to match lfa_quantifier.py
+        top_half_profile = profile[:int(h*0.6)]
+        
+        quantitative_data = {
+            "control_intensity": 0.0,
+            "test_intensity": 0.0,
+            "ratio": 0.0,
+            "result": "Invalid"
+        }
+        
+        # Find Control Peak using scipy
+        if SCIPY_AVAILABLE:
+            c_peaks, _ = find_peaks(top_half_profile, height=20, distance=20)
         else:
-            # Fallback to in-memory processing
-            analysis_image = cv2.imread(analysis_path)
-            quantifier_wrapper = LFAQuantifierWrapper()
-            quantitative_data = quantifier_wrapper.process_strip_from_array(analysis_image)
+            # Fallback: simple peak detection
+            c_peaks = []
+            for i in range(20, len(top_half_profile) - 20):
+                if top_half_profile[i] > 20:
+                    is_peak = True
+                    for j in range(1, 21):
+                        if top_half_profile[i] <= top_half_profile[i - j] or top_half_profile[i] <= top_half_profile[i + j]:
+                            is_peak = False
+                            break
+                    if is_peak:
+                        c_peaks.append(i)
+            c_peaks = np.array(c_peaks)
+        
+        if len(c_peaks) > 0:
+            # Pick the tallest peak as Control
+            c_pos = c_peaks[np.argmax(top_half_profile[c_peaks])]
+            c_intensity = float(profile[c_pos])
+            quantitative_data['control_intensity'] = c_intensity
+            
+            # Targeted Test Line Search
+            start_search = c_pos + 60
+            end_search = min(c_pos + 160, h-10)
+            
+            if start_search < end_search:
+                test_zone = profile[start_search:end_search]
+                
+                # Look for MAXIMUM signal in this zone
+                max_signal_idx = np.argmax(test_zone)
+                max_signal = test_zone[max_signal_idx]
+                
+                # Calculate local background
+                background = np.min(test_zone)
+                true_intensity = float(max_signal - background)
+                
+                quantitative_data['test_intensity'] = max(0.0, true_intensity)
+                
+                # Decision Logic
+                if quantitative_data['test_intensity'] > 3.0:
+                    quantitative_data['result'] = "Positive"
+                else:
+                    quantitative_data['result'] = "Negative"
+                
+                if c_intensity > 0:
+                    quantitative_data['ratio'] = quantitative_data['test_intensity'] / c_intensity
         
         print(f"   Quantitative Analysis: control={quantitative_data['control_intensity']:.2f}, test={quantitative_data['test_intensity']:.2f}")
         
-        # --- STEP 2: AI INFERENCE - Read from file like final_inference.py ---
-        # final_inference.py calls: input_data = self.preprocess_for_ai(analysis_path)
-        # preprocess_for_ai reads from file with cv2.imread
-        
-        # Read image from temp file (same as final_inference.py)
-        img_for_ai = cv2.imread(analysis_path)
-        if img_for_ai is None:
-            return jsonify({'error': 'Failed to read temp image'}), 500
-        
+        # --- STEP 2: AI INFERENCE ---
         # Get model's required input dimensions
         height, width, channels = model_loader.get_input_shape()
         
         # Preprocess EXACTLY like final_inference.py preprocess_for_ai()
-        # Resize
-        img_for_ai = cv2.resize(img_for_ai, (width, height))
-        # RGB
+        # Uses analysis_image which is either JPEG-decoded (if cropped) or original (if not)
+        img_for_ai = cv2.resize(analysis_image, (width, height))
         img_for_ai = cv2.cvtColor(img_for_ai, cv2.COLOR_BGR2RGB)
-        # Normalize (-1 to 1 for MobileNetV2)
         img_for_ai = img_for_ai.astype(np.float32)
         img_for_ai = (img_for_ai / 127.5) - 1.0
-        # Batch dim
         processed_image = np.expand_dims(img_for_ai, axis=0)
         
         # Run inference
@@ -1032,8 +1087,8 @@ def predict():
         # Calculate processing time
         processing_time = (time.time() - start_time) * 1000  # ms
         
-        # Cleanup temp file (like final_inference.py)
-        if os.path.exists(TEMP_CROP_PATH):
+        # Cleanup temp file if we used it
+        if used_temp_file and os.path.exists(TEMP_CROP_PATH):
             os.remove(TEMP_CROP_PATH)
         
         # Build response matching final_inference.py output
