@@ -924,9 +924,14 @@ def health_check():
 def predict():
     """
     Main prediction endpoint with hybrid decision logic.
-    Accepts base64 image and returns comprehensive analysis results
-    including quantitative data and decision method (like final_inference.py).
+    EXACTLY matches final_inference.py workflow:
+    1. Smart crop
+    2. Save to temp file (for JPEG compression consistency)
+    3. Reload from file for both quantifier AND AI
+    4. Hybrid decision
     """
+    
+    TEMP_CROP_PATH = 'temp_autocrop.jpg'
     
     try:
         # Parse request
@@ -950,39 +955,66 @@ def predict():
         if original_image is None:
             return jsonify({'error': 'Failed to decode image'}), 400
         
-        # --- STEP 0: SMART CROP (Auto-Detection) ---
+        # --- STEP 0: SMART CROP (Auto-Detection) - Matches final_inference.py ---
         cropped_image, was_cropped = SmartCropProcessor.smart_crop(original_image)
-        input_type = "Raw Photo (Auto-Cropped)" if was_cropped else "Direct Upload"
-        
-        # Use cropped image for analysis
-        analysis_image = cropped_image if was_cropped else original_image
+        input_type = "Raw Photo (Auto-Cropped)" if was_cropped else "Cropped Strip"
         
         # Debug: Log image dimensions
         print(f"   Original image: {original_image.shape}")
         print(f"   Was cropped: {was_cropped}")
         if was_cropped:
-            print(f"   Cropped image: {analysis_image.shape}")
+            print(f"   Cropped image: {cropped_image.shape}")
         
-        # --- STEP 1: QUANTITATIVE ANALYSIS using LFAQuantifier ---
-        quantifier = LFAQuantifierWrapper()
-        quantitative_data = quantifier.process_strip_from_array(analysis_image)
+        # --- CRITICAL: Save to temp file to match final_inference.py exactly ---
+        # final_inference.py saves cropped image to JPEG and reloads it
+        # This JPEG compression affects pixel values slightly
+        # We must do the same to get identical results
+        
+        if was_cropped:
+            # Save cropped image to temp file (like final_inference.py)
+            cv2.imwrite(TEMP_CROP_PATH, cropped_image)
+            analysis_path = TEMP_CROP_PATH
+        else:
+            # Save original to temp file for consistency
+            cv2.imwrite(TEMP_CROP_PATH, original_image)
+            analysis_path = TEMP_CROP_PATH
+        
+        # --- STEP 1: QUANTITATIVE ANALYSIS - Use file path like final_inference.py ---
+        # final_inference.py calls: q_metrics = self.quantifier.process_strip(analysis_path)
+        # We must do the same (read from file, not in-memory array)
+        if QUANTIFIER_AVAILABLE:
+            quantifier = LFAQuantifier()
+            quantitative_data = quantifier.process_strip(analysis_path)
+        else:
+            # Fallback to in-memory processing
+            analysis_image = cv2.imread(analysis_path)
+            quantifier_wrapper = LFAQuantifierWrapper()
+            quantitative_data = quantifier_wrapper.process_strip_from_array(analysis_image)
         
         print(f"   Quantitative Analysis: control={quantitative_data['control_intensity']:.2f}, test={quantitative_data['test_intensity']:.2f}")
         
-        # --- STEP 2: AI INFERENCE ---
+        # --- STEP 2: AI INFERENCE - Read from file like final_inference.py ---
+        # final_inference.py calls: input_data = self.preprocess_for_ai(analysis_path)
+        # preprocess_for_ai reads from file with cv2.imread
+        
+        # Read image from temp file (same as final_inference.py)
+        img_for_ai = cv2.imread(analysis_path)
+        if img_for_ai is None:
+            return jsonify({'error': 'Failed to read temp image'}), 500
+        
         # Get model's required input dimensions
         height, width, channels = model_loader.get_input_shape()
         
-        # Preprocess image for Keras model (uses -1 to 1 normalization for MobileNetV2)
-        if model_loader.model_type in ['keras', 'h5']:
-            processed_image = ImageProcessor.preprocess_for_keras(analysis_image, height, width)
-        else:
-            # For TFLite, use standard 0-1 normalization
-            # Resize and convert
-            resized = cv2.resize(analysis_image, (width, height))
-            rgb = cv2.cvtColor(resized, cv2.COLOR_BGR2RGB)
-            processed_image = rgb.astype(np.float32) / 255.0
-            processed_image = np.expand_dims(processed_image, axis=0)
+        # Preprocess EXACTLY like final_inference.py preprocess_for_ai()
+        # Resize
+        img_for_ai = cv2.resize(img_for_ai, (width, height))
+        # RGB
+        img_for_ai = cv2.cvtColor(img_for_ai, cv2.COLOR_BGR2RGB)
+        # Normalize (-1 to 1 for MobileNetV2)
+        img_for_ai = img_for_ai.astype(np.float32)
+        img_for_ai = (img_for_ai / 127.5) - 1.0
+        # Batch dim
+        processed_image = np.expand_dims(img_for_ai, axis=0)
         
         # Run inference
         prediction = model_loader.predict(processed_image)
@@ -997,18 +1029,18 @@ def predict():
         
         print(f"   Decision: {diagnosis} (method: {decision_method})")
         
-        # Detect lines using original method for backward compatibility
-        original_rgb = cv2.cvtColor(analysis_image, cv2.COLOR_BGR2RGB)
-        line_data = ImageProcessor.detect_lines(original_rgb)
-        
         # Calculate processing time
         processing_time = (time.time() - start_time) * 1000  # ms
+        
+        # Cleanup temp file (like final_inference.py)
+        if os.path.exists(TEMP_CROP_PATH):
+            os.remove(TEMP_CROP_PATH)
         
         # Build response matching final_inference.py output
         response = {
             'success': True,
             
-            # Primary result
+            # Primary result (matches final_inference.py exactly)
             'diagnosis': diagnosis,
             'is_positive': diagnosis == "Positive",
             'decision_method': decision_method,
@@ -1018,7 +1050,7 @@ def predict():
             'confidence': ai_score,
             'confidence_score': f"{ai_score:.4f}",
             
-            # Quantitative data (matching final_inference.py format)
+            # Quantitative data (matching final_inference.py format exactly)
             'quantitative_data': {
                 'control_line': f"{quantitative_data['control_intensity']:.2f}",
                 'test_line': f"{quantitative_data['test_intensity']:.2f}",
@@ -1028,14 +1060,6 @@ def predict():
             # Backward compatibility fields
             'control_line_detected': quantitative_data['control_intensity'] > 0,
             'test_line_detected': quantitative_data['test_intensity'] > config.STRONG_POSITIVE_INTENSITY_THRESHOLD,
-            'num_lines_detected': line_data['num_lines'],
-            
-            # Legacy analysis fields
-            'is_invalid': quantitative_data.get('result') == "Error",
-            'intensity_score': min(quantitative_data['test_intensity'] * 5, 100),  # Scale for display
-            'intensity_category': ResultAnalyzer._categorize_intensity(min(quantitative_data['test_intensity'] * 5, 100)),
-            'quality': ResultAnalyzer._assess_quality(ai_score, line_data),
-            'threshold': config.CONFIDENCE_THRESHOLD,
             
             # Processing info
             'processing_time_ms': processing_time,
@@ -1047,6 +1071,9 @@ def predict():
         
     except Exception as e:
         print(f"❌ Prediction error: {e}")
+        # Cleanup temp file on error
+        if os.path.exists('temp_autocrop.jpg'):
+            os.remove('temp_autocrop.jpg')
         return jsonify({
             'success': False,
             'error': str(e)
