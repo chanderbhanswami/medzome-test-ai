@@ -90,12 +90,13 @@ class Config:
         }
     }
     
-    # Hybrid decision thresholds (from final_inference.py)
+    # Hybrid decision thresholds (EXACT values from final_inference.py)
+    # DO NOT CHANGE - These are calibrated for the trained model
     STRONG_POSITIVE_AI_THRESHOLD = 0.7
-    STRONG_POSITIVE_INTENSITY_THRESHOLD = 3.0
+    STRONG_POSITIVE_INTENSITY_THRESHOLD = 3.0  # Was 10.0 - WRONG!
     FAINT_POSITIVE_AI_THRESHOLD = 0.95
-    FAINT_POSITIVE_INTENSITY_THRESHOLD = 1.5
-    SIGNAL_OVERRIDE_INTENSITY_THRESHOLD = 20.0
+    FAINT_POSITIVE_INTENSITY_THRESHOLD = 1.5   # Was 5.0 - WRONG!
+    SIGNAL_OVERRIDE_INTENSITY_THRESHOLD = 20.0  # Was 30.0 - WRONG!
 
 config = Config()
 
@@ -539,14 +540,17 @@ class LFAQuantifierWrapper:
 class HybridDecisionEngine:
     """
     Hybrid decision logic combining AI confidence with quantitative analysis.
-    Matches the logic in final_inference.py exactly.
+    EXACTLY matches the logic in final_inference.py for 100% identical results.
     """
     
     @staticmethod
     def make_decision(ai_score: float, quantitative_data: Dict[str, Any]) -> Dict[str, str]:
         """
         Make hybrid decision based on AI score and quantitative analysis.
-        Uses the same logic as final_inference.py.
+        Uses the EXACT same logic as final_inference.py - DO NOT MODIFY THRESHOLDS!
+        
+        The model is trained to detect faint lines that are not visible to naked eye.
+        These thresholds are calibrated for that purpose.
         
         Args:
             ai_score: AI model confidence (0-1)
@@ -560,24 +564,24 @@ class HybridDecisionEngine:
         final_status = "Negative"
         method = "AI_Agreement"
         
-        # LOGIC GATES (same as final_inference.py)
+        # ========================================================================
+        # LOGIC GATES - EXACT COPY FROM final_inference.py
+        # DO NOT CHANGE THESE THRESHOLDS - They are calibrated for the trained model
+        # ========================================================================
         
-        # 1. Strong Positive: AI is sure (>70%) AND Intensity is clearly visible (>10.0)
-        #    Increased from 3.0 to 10.0 to avoid false positives from noise
-        if ai_score > 0.7 and test_intensity > 10.0:
+        # 1. Strong Positive: AI is sure (>70%) AND Intensity is visible (>3.0)
+        if ai_score > 0.7 and test_intensity > 3.0:
             final_status = "Positive"
             method = "Confirmed_Positive"
             
-        # 2. Faint Positive: AI is VERY sure (>95%) AND we see a faint signal (>5.0)
-        #    Increased from 1.5 to 5.0 for more reliability
-        elif ai_score > 0.95 and test_intensity > 5.0:
+        # 2. Faint Positive: AI is VERY sure (>95%) AND we see a faint signal (>1.5)
+        elif ai_score > 0.95 and test_intensity > 1.5:
             final_status = "Positive"
             method = "AI_Rescued_Faint_Line"
             
-        # 3. Signal Override: AI missed it, but intensity is huge (>30.0)
-        #    IMPORTANT: Only override if AI is at least somewhat uncertain (> 0.3)
-        #    Increased from 20.0 to 30.0 for more reliability
-        elif test_intensity > 30.0 and ai_score > 0.3:
+        # 3. Signal Override: AI missed it, but intensity is huge (>20.0)
+        # Increased threshold to avoid false positives from shadows
+        elif test_intensity > 20.0:
             final_status = "Positive"
             method = "Signal_Override"
             
