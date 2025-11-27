@@ -385,16 +385,9 @@ class SmartCropProcessor:
                             # Capture Full Width (Matches Training Data)
                             best_crop = search_zone[sy:sy + sh, sx:sx + sw]
             
-            # CRITICAL: Validate crop dimensions
-            # Crop must be large enough to be a real strip (not noise)
-            # Minimum: 150 pixels height, 60 pixels width (real strips are bigger)
+            # Return crop if found (matches final_inference.py exactly - NO size validation)
             if best_crop is not None:
-                crop_h, crop_w = best_crop.shape[:2]
-                if crop_h >= 150 and crop_w >= 60:
-                    return best_crop, True
-                else:
-                    print(f"   ⚠️ Crop too small ({crop_h}x{crop_w}), using original image")
-                    return img, False
+                return best_crop, True
             
             return img, False
             
@@ -453,11 +446,11 @@ class LFAQuantifierWrapper:
             
             # 3. Create Profile
             profile = np.mean(signal, axis=1)
-            profile_len = len(profile)  # Actual profile length (after vertical crop)
             
             # 4. Find Control Line (The strongest peak in top half)
-            # Use profile_len for calculations to avoid index out of bounds
-            top_half_profile = profile[:int(profile_len * 0.6)]
+            # IMPORTANT: Use original h (not profile length) to match lfa_quantifier.py exactly
+            # lfa_quantifier.py uses: top_half_profile = profile[:int(h*0.6)]
+            top_half_profile = profile[:int(h*0.6)]
             
             results = {
                 "control_intensity": 0.0,
@@ -480,8 +473,10 @@ class LFAQuantifierWrapper:
                 results['control_intensity'] = c_intensity
                 
                 # 5. Targeted Test Line Search
+                # The Test line is physically located below the Control line.
+                # In a 384px image, it's typically ~80-140 pixels below.
                 start_search = c_pos + 60
-                end_search = min(c_pos + 160, profile_len)  # Use profile_len to avoid overflow
+                end_search = min(c_pos + 160, h-10)  # Use h-10 to match lfa_quantifier.py
                 
                 if start_search < end_search:
                     test_zone = profile[start_search:end_search]
