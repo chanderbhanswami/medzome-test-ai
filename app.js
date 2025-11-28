@@ -369,14 +369,40 @@ function captureImage() {
     const ctx = canvas.getContext('2d');
     ctx.drawImage(video, 0, 0);
     
-    const imageData = canvas.toDataURL('image/jpeg', 0.95);
+    // Calculate the guide frame area (70% width, 80% height, centered)
+    // These percentages match the CSS .scan-guide dimensions
+    const guideWidthPercent = 0.70;
+    const guideHeightPercent = 0.80;
     
-    elements.capturedImage.src = imageData;
+    const cropWidth = video.videoWidth * guideWidthPercent;
+    const cropHeight = video.videoHeight * guideHeightPercent;
+    const cropX = (video.videoWidth - cropWidth) / 2;
+    const cropY = (video.videoHeight - cropHeight) / 2;
+    
+    // Create a separate canvas for the cropped image
+    const cropCanvas = document.createElement('canvas');
+    cropCanvas.width = cropWidth;
+    cropCanvas.height = cropHeight;
+    const cropCtx = cropCanvas.getContext('2d');
+    
+    // Draw only the guided border area
+    cropCtx.drawImage(
+        canvas,
+        cropX, cropY, cropWidth, cropHeight,  // Source rectangle (from full frame)
+        0, 0, cropWidth, cropHeight            // Destination rectangle (cropped canvas)
+    );
+    
+    // Get the cropped image data
+    const croppedImageData = cropCanvas.toDataURL('image/jpeg', 0.95);
+    
+    // Show cropped image in confirmation modal
+    elements.capturedImage.src = croppedImageData;
     elements.captureModal.classList.add('active');
 }
 
 function useCapturedImage() {
-    const imageData = elements.capturedImage.src;
+    // Use the cropped image directly from the confirmation modal
+    const croppedImageData = elements.capturedImage.src;
     
     // Set image name for camera captures
     currentImageName = 'Camera Capture';
@@ -384,11 +410,11 @@ function useCapturedImage() {
     const img = new Image();
     img.onload = () => {
         currentImage = img;
-        currentImageData = imageData;
-        showPreview(imageData);
+        currentImageData = croppedImageData;
+        showPreview(croppedImageData);
         updateInfoPanel('Image captured successfully. Click "Analyze" to begin.', 'success');
     };
-    img.src = imageData;
+    img.src = croppedImageData;
     
     elements.captureModal.classList.remove('active');
     closeCamera();
@@ -578,8 +604,17 @@ function displayResults(result) {
     // Get quantitative data from server response
     const quantData = result.quantitative_data || {};
     const controlLineValue = parseFloat(quantData.control_line) || 0;
-    const testLineValue = parseFloat(quantData.test_line) || 0;
+    const testLineRaw = parseFloat(quantData.test_line_raw) || parseFloat(quantData.test_line) || 0;
+    // Fix: Don't use || for testLineNormalized since 0 is a valid normalized value
+    const testLineNormalized = quantData.test_line_normalized !== undefined 
+        ? parseFloat(quantData.test_line_normalized) 
+        : testLineRaw;
     const ratioTC = parseFloat(quantData.ratio_tc) || 0;
+    const estimatedConcentration = quantData.estimated_concentration_ng_ml;
+    
+    // Get normalization info
+    const normalization = result.normalization || {};
+    const normalizationApplied = normalization.applied || false;
     
     // Update result badge with decision method indicator
     elements.resultBadge.className = `result-badge ${status}`;
@@ -611,8 +646,10 @@ function displayResults(result) {
     }
     elements.resultMessage.textContent = resultMessage;
     
-    // Calculate display intensity from quantitative data
-    const lineIntensity = Math.min(testLineValue * 5, 100); // Scale for display (0-100%)
+    // Calculate display intensity from NORMALIZED quantitative data
+    // For negative results, normalized intensity is 0 (no line to show)
+    // For positive results, normalized intensity is scaled 0-100
+    const lineIntensity = testLineNormalized; // Already normalized 0-100 scale
     const intensityCategory = getIntensityCategory(lineIntensity);
     
     // Update metrics
@@ -634,15 +671,23 @@ function displayResults(result) {
         : '✗ Not Detected';
     elements.controlLine.className = controlLineValue > 0 ? 'detail-value text-success' : 'detail-value text-danger';
     
-    elements.testLine.textContent = testLineValue > 3.0 
-        ? `✓ ${testLineValue.toFixed(2)} intensity` 
-        : testLineValue > 0 
-            ? `○ ${testLineValue.toFixed(2)} (weak)` 
-            : '✗ Not Detected';
-    elements.testLine.className = testLineValue > 3.0 ? 'detail-value text-danger' : testLineValue > 0 ? 'detail-value text-warning' : 'detail-value text-success';
+    // Test line display: show normalized value only
+    // If normalized to 0 (negative), show just 0.00% in green
+    // If positive with value, show the normalized percentage in red
+    if (testLineNormalized === 0 || testLineNormalized < 0.01) {
+        elements.testLine.textContent = '0.00%';
+        elements.testLine.className = 'detail-value text-success';  // Green for negative/no line
+    } else {
+        elements.testLine.textContent = `${testLineNormalized.toFixed(2)}%`;
+        elements.testLine.className = 'detail-value text-danger';  // Red for positive
+    }
     
-    // Update intensity score with T/C ratio
-    elements.intensityScore.textContent = `${testLineValue.toFixed(2)} (T/C: ${ratioTC.toFixed(4)})`;
+    // Update intensity score with T/C ratio and estimated concentration
+    let intensityScoreText = `${testLineNormalized.toFixed(2)}% (T/C: ${ratioTC.toFixed(4)})`;
+    if (estimatedConcentration !== null && estimatedConcentration !== undefined) {
+        intensityScoreText += ` | Est: ${parseFloat(estimatedConcentration).toFixed(2)} ng/mL`;
+    }
+    elements.intensityScore.textContent = intensityScoreText;
     
     // Update quality assessment
     elements.qualityAssessment.textContent = result.quality || assessImageQuality(result);
@@ -663,7 +708,7 @@ function displayResults(result) {
     }
     
     // Update medical guidance with real data
-    updateMedicalGuidance(isPositive, lineIntensity, intensityCategory, false, decisionMethod, testLineValue);
+    updateMedicalGuidance(isPositive, lineIntensity, intensityCategory, false, decisionMethod, testLineNormalized);
     
     // Scroll to results
     elements.resultsDisplay.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -989,7 +1034,11 @@ function downloadReport() {
             // Get quantitative data
             const quantData = analysisResults.quantitative_data || {};
             const controlLineValue = parseFloat(quantData.control_line) || 0;
-            const testLineValue = parseFloat(quantData.test_line) || 0;
+            const testLineRaw = parseFloat(quantData.test_line_raw) || parseFloat(quantData.test_line) || 0;
+            // Fix: Don't use || for testLineNormalized since 0 is a valid normalized value
+            const testLineNormalized = quantData.test_line_normalized !== undefined 
+                ? parseFloat(quantData.test_line_normalized) 
+                : testLineRaw;
             const ratioTC = parseFloat(quantData.ratio_tc) || 0;
             const decisionMethod = analysisResults.decision_method || 'AI_Agreement';
             const inputType = analysisResults.input_type || 'Direct Upload';
@@ -1061,7 +1110,7 @@ function downloadReport() {
                 ['Input Type:', inputType],
                 ['AI Confidence:', `${(analysisResults.confidence * 100).toFixed(1)}%`],
                 ['Control Line:', controlLineValue > 0 ? `${controlLineValue.toFixed(2)} intensity` : 'Not Detected'],
-                ['Test Line:', testLineValue > 0 ? `${testLineValue.toFixed(2)} intensity` : 'Not Detected'],
+                ['Test Line:', `${testLineNormalized.toFixed(2)}%`],
                 ['T/C Ratio:', ratioTC.toFixed(4)],
                 ['Processing Time:', `${(analysisResults.processing_time_ms || 0).toFixed(0)} ms`],
                 ['Image Quality:', analysisResults.quality || assessImageQuality(analysisResults)],
@@ -1288,7 +1337,11 @@ function showResultsModal(result, imageData, imageName) {
     // Get quantitative data with null safety
     const quantData = result.quantitative_data || {};
     const controlLineValue = parseFloat(quantData.control_line) || 0;
-    const testLineValue = parseFloat(quantData.test_line) || 0;
+    const testLineRaw = parseFloat(quantData.test_line_raw) || parseFloat(quantData.test_line) || 0;
+    // Fix: Don't use || for testLineNormalized since 0 is a valid normalized value
+    const testLineNormalized = quantData.test_line_normalized !== undefined 
+        ? parseFloat(quantData.test_line_normalized) 
+        : testLineRaw;
     const ratioTC = parseFloat(quantData.ratio_tc) || 0;
     const decisionMethod = result.decision_method || 'AI_Agreement';
     const inputType = result.input_type || 'Direct Upload';
@@ -1336,8 +1389,8 @@ function showResultsModal(result, imageData, imageName) {
         elements.modalResultStatus.textContent = isPositive ? 'POSITIVE' : 'NEGATIVE';
         if (elements.modalResultMessage) elements.modalResultMessage.textContent = formatDecisionMethod(decisionMethod);
         
-        // Metrics - use quantitative data
-        const intensity = Math.min(testLineValue * 5, 100);
+        // Metrics - use normalized intensity
+        const intensity = testLineNormalized;  // Already normalized 0-100
         const intensityCategory = getIntensityCategory(intensity);
         
         elements.modalConfidenceValue.textContent = confidence.toFixed(1) + '%';
@@ -1360,13 +1413,18 @@ function showResultsModal(result, imageData, imageName) {
             ? `✓ ${controlLineValue.toFixed(2)} intensity` 
             : 'Not Detected';
         
-        elements.modalTestLine.textContent = testLineValue > 3.0 
-            ? `✓ ${testLineValue.toFixed(2)} intensity` 
-            : testLineValue > 0 
-                ? `○ ${testLineValue.toFixed(2)} (weak)` 
-                : 'Not Detected';
+        // Test line display: show normalized value only
+        // If normalized to 0 (negative), show just 0.00% in green
+        // If positive with value, show the normalized percentage
+        if (testLineNormalized === 0 || testLineNormalized < 0.01) {
+            elements.modalTestLine.textContent = '0.00%';
+            elements.modalTestLine.className = 'detail-value text-success';  // Green for negative/no line
+        } else {
+            elements.modalTestLine.textContent = `${testLineNormalized.toFixed(2)}%`;
+            elements.modalTestLine.className = 'detail-value text-danger';  // Red for positive
+        }
         
-        elements.modalIntensityScore.textContent = `${testLineValue.toFixed(2)} (T/C: ${ratioTC.toFixed(4)})`;
+        elements.modalIntensityScore.textContent = `${testLineNormalized.toFixed(2)}% (T/C: ${ratioTC.toFixed(4)})`;
         elements.modalQualityAssessment.textContent = result.quality || assessImageQuality(result);
         
         // Medical guidance with decision method context
@@ -1375,16 +1433,16 @@ function showResultsModal(result, imageData, imageName) {
             let guidanceText = '';
             switch (decisionMethod) {
                 case 'Confirmed_Positive':
-                    guidanceText = `Strong positive confirmed by both AI (${confidence.toFixed(1)}%) and quantitative analysis (test line: ${testLineValue.toFixed(2)}). Seek immediate medical consultation.`;
+                    guidanceText = `Strong positive confirmed by both AI (${confidence.toFixed(1)}%) and quantitative analysis (intensity: ${testLineNormalized.toFixed(2)}%). Seek immediate medical consultation.`;
                     break;
                 case 'AI_Rescued_Faint_Line':
-                    guidanceText = `Faint positive detected. AI confidence is high (${confidence.toFixed(1)}%) with weak line signal (${testLineValue.toFixed(2)}). Consider retesting and consult a healthcare professional.`;
+                    guidanceText = `Faint positive detected. AI confidence is high (${confidence.toFixed(1)}%) with weak line signal (${testLineNormalized.toFixed(2)}%). Consider retesting and consult a healthcare professional.`;
                     break;
                 case 'Signal_Override':
-                    guidanceText = `Positive detected by strong test line signal (${testLineValue.toFixed(2)}). The line is clearly visible. Please consult a healthcare professional.`;
+                    guidanceText = `Positive detected by strong test line signal (${testLineNormalized.toFixed(2)}%). The line is clearly visible. Please consult a healthcare professional.`;
                     break;
                 default:
-                    guidanceText = `Positive result detected. Line intensity: ${testLineValue.toFixed(2)}. Medical consultation recommended.`;
+                    guidanceText = `Positive result detected. Line intensity: ${testLineNormalized.toFixed(2)}%. Medical consultation recommended.`;
             }
             elements.modalGuidanceText.textContent = guidanceText;
         } else {
@@ -1392,10 +1450,10 @@ function showResultsModal(result, imageData, imageName) {
             let guidanceText = '';
             switch (decisionMethod) {
                 case 'Confirmed_Negative':
-                    guidanceText = `Negative confirmed. Both AI and quantitative analysis show no significant test line. Monitor for symptoms.`;
+                    guidanceText = `Negative confirmed. Both AI and quantitative analysis show no significant test line (0.00%). Monitor for symptoms.`;
                     break;
                 case 'Quantifier_Veto':
-                    guidanceText = `Negative result. AI showed some signal but quantitative analysis confirmed no visible line. Result is likely negative.`;
+                    guidanceText = `Negative result. AI showed some signal but quantitative analysis confirmed no visible line (0.00%). Result is likely negative.`;
                     break;
                 default:
                     guidanceText = 'Negative result. If symptoms persist or you have concerns, please consult a healthcare professional.';

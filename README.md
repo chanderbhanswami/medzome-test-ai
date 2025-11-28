@@ -2,8 +2,8 @@
 
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
-[![Live Demo](https://img.shields.io/badge/Live%20Demo-Available-brightgreen)](https://medzome.onrender.com/)
-[![Responsive](https://img.shields.io/badge/Responsive-Yes-blue)](https://medzome.onrender.com/)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Available-brightgreen)](https://chanderbhanswami-medzome.hf.space/)
+[![Responsive](https://img.shields.io/badge/Responsive-Yes-blue)](https://chanderbhanswami-medzome.hf.space/)
 [![Backend](https://img.shields.io/badge/Backend-Flask%20%7C%20TensorFlow%20%7C%20OpenCV-orange)](https://www.tensorflow.org/)
 [![Frontend](https://img.shields.io/badge/Frontend-HTML%20%7C%20CSS%20%7C%20JS%20%7C%20Bootstrap-blueviolet)](https://getbootstrap.com/)
 [![GitHub stars](https://img.shields.io/github/stars/chanderbhanswami/fence-staining-visualizer)](https://github.com/chanderbhanswami/medzome-test-ai)
@@ -23,7 +23,7 @@
     - [History \& Results Modal](#history--results-modal)
     - [PDF Reporting](#pdf-reporting)
     - [User Experience \& Accessibility](#user-experience--accessibility)
-    - [Image Processing \& AI](#image-processing--ai)
+    - [Image Processing, AI \& Advanced Normalization](#image-processing-ai--advanced-normalization)
     - [Security \& Privacy](#security--privacy)
     - [Extensibility \& Maintenance](#extensibility--maintenance)
     - [Additional Features](#additional-features)
@@ -136,11 +136,17 @@ Medzome implements a complete, professional-grade feature set for objective, rob
 - Touch-friendly controls and large tap targets
 - Error prevention, clear error messages, and recovery options
 
-### Image Processing & AI
+
+### Image Processing, AI & Advanced Normalization
 - Adaptive lighting correction (CLAHE in LAB space)
 - Perspective correction (contour detection)
 - Test and control line detection (OpenCV, NumPy, scipy.signal)
 - Intensity measurement and scoring (grayscale, horizontal profile, peak detection)
+- **Advanced intensity normalization:**
+  - Uses a trained `IntensityNormalizer` model (`intensity_normalizer.py` + `intensity_normalizer.pkl`) for robust, calibrated, and reproducible test line quantification
+  - Automatically applies negative baseline correction, positive normalization, and concentration estimation (4PL curve)
+  - If the full model is unavailable, falls back to JSON parameters (`normalization_params.json`) for threshold-based normalization
+  - Both the web interface and CLI use the exact same normalization logic for consistent results
 - Binary and semi-quantitative classification (threshold configurable)
 - All processing steps are fully documented and reproducible
 
@@ -298,7 +304,7 @@ Users can generate a professional PDF report for any result, including all metri
 
 ## Live Demo
 
-**Try it now:** [Open Live Demo](https://medzome.onrender.com/)
+**Try it now:** [Open Live Demo](https://chanderbhanswami-medzome.hf.space/)
 
 ---
 

@@ -57,6 +57,17 @@ except ImportError:
     SCIPY_AVAILABLE = False
     print("⚠️  SciPy not found - some analysis features may be limited")
 
+# Intensity Normalizer import (for calibrated intensity readings)
+try:
+    from intensity_normalizer import IntensityNormalizer
+    import pickle
+    NORMALIZER_AVAILABLE = True
+    print("✅ IntensityNormalizer available")
+except ImportError:
+    NORMALIZER_AVAILABLE = False
+    IntensityNormalizer = None
+    print("⚠️  IntensityNormalizer not found - normalization disabled")
+
 # ============================================================================
 # Configuration
 # ============================================================================
@@ -97,6 +108,11 @@ class Config:
     FAINT_POSITIVE_AI_THRESHOLD = 0.95
     FAINT_POSITIVE_INTENSITY_THRESHOLD = 1.5   # Was 5.0 - WRONG!
     SIGNAL_OVERRIDE_INTENSITY_THRESHOLD = 20.0  # Was 30.0 - WRONG!
+    
+    # Normalization model paths (relative to script location)
+    SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+    NORMALIZER_PATH = os.path.join(SCRIPT_DIR, 'intensity_normalizer.pkl')
+    NORMALIZATION_PARAMS_PATH = os.path.join(SCRIPT_DIR, 'normalization_params.json')
 
 config = Config()
 
@@ -595,6 +611,153 @@ class HybridDecisionEngine:
 
 
 # ============================================================================
+# Intensity Normalizer Wrapper
+# ============================================================================
+
+class IntensityNormalizerWrapper:
+    """
+    Wrapper for intensity normalization that matches final_inference.py behavior.
+    Loads the trained normalizer model and provides calibrated intensity readings.
+    
+    For NEGATIVE results: test line intensity is forced to 0
+    For POSITIVE results: intensity is calibrated and concentration is estimated
+    """
+    
+    def __init__(self):
+        self.normalizer = None
+        self.norm_params = None
+        self._load_normalizer()
+    
+    def _load_normalizer(self):
+        """Load the intensity normalizer from pickle and JSON files."""
+        print(f"   Looking for normalizer at: {config.NORMALIZER_PATH}")
+        print(f"   Looking for params at: {config.NORMALIZATION_PARAMS_PATH}")
+        
+        # Try to load pickle model
+        if NORMALIZER_AVAILABLE and os.path.exists(config.NORMALIZER_PATH):
+            try:
+                with open(config.NORMALIZER_PATH, 'rb') as f:
+                    self.normalizer = pickle.load(f)
+                print("✅ Intensity normalizer loaded from pickle")
+            except Exception as e:
+                print(f"⚠️  Could not load normalizer pickle: {e}")
+        else:
+            print(f"⚠️  Normalizer pickle not found or NORMALIZER_AVAILABLE={NORMALIZER_AVAILABLE}")
+        
+        # Load JSON params as fallback/reference
+        if os.path.exists(config.NORMALIZATION_PARAMS_PATH):
+            try:
+                with open(config.NORMALIZATION_PARAMS_PATH, 'r') as f:
+                    self.norm_params = json.load(f)
+                print("✅ Normalization params loaded from JSON")
+            except Exception as e:
+                print(f"⚠️  Could not load normalization params: {e}")
+        else:
+            print(f"⚠️  Normalization params JSON not found")
+    
+    def normalize(self, test_intensity: float, control_intensity: float, 
+                  ai_prediction: str, ai_confidence: float) -> Dict[str, Any]:
+        """
+        Normalize intensity readings. Matches final_inference.py _normalize_intensity().
+        
+        Args:
+            test_intensity: Raw test line intensity
+            control_intensity: Raw control line intensity
+            ai_prediction: AI prediction ('Positive' or 'Negative')
+            ai_confidence: AI confidence score (0-1)
+            
+        Returns:
+            Dictionary with normalized values
+        """
+        result = {
+            'normalized_intensity': test_intensity,  # Default to raw
+            'estimated_concentration': None,
+            'normalization_applied': False,
+            'method': 'none'
+        }
+        
+        # Try to use the pickle normalizer first (full model)
+        if self.normalizer is not None:
+            try:
+                norm_result = self.normalizer.normalize(
+                    test_intensity=test_intensity,
+                    control_intensity=control_intensity,
+                    ai_prediction=ai_prediction,
+                    ai_confidence=ai_confidence
+                )
+                result['normalized_intensity'] = norm_result['normalized_intensity']
+                result['estimated_concentration'] = norm_result.get('estimated_concentration')
+                result['normalization_applied'] = True
+                result['method'] = 'full_model'
+                return result
+            except Exception as e:
+                print(f"⚠️  Normalizer error: {e}, using fallback")
+        
+        # Fallback: Use JSON params for simple threshold-based normalization
+        if self.norm_params is not None:
+            try:
+                threshold = self.norm_params['thresholds']['negative_intensity_threshold']
+                baseline = self.norm_params['thresholds']['baseline']
+                
+                if ai_prediction.lower() == 'negative':
+                    # NEGATIVE: Force intensity to 0
+                    result['normalized_intensity'] = 0.0
+                    result['estimated_concentration'] = 0.0
+                    result['normalization_applied'] = True
+                    result['method'] = 'threshold_negative'
+                else:
+                    # POSITIVE: Subtract baseline and normalize
+                    normalized = test_intensity - baseline
+                    normalized = max(0, normalized)  # Clip to 0
+                    
+                    # Scale to 0-100 if we have scale factor
+                    scale = self.norm_params.get('normalization_scale', 1.0)
+                    if scale > 0:
+                        normalized = (normalized / scale) * 100
+                    
+                    result['normalized_intensity'] = round(normalized, 2)
+                    result['normalization_applied'] = True
+                    result['method'] = 'threshold_positive'
+                    
+                    # Estimate concentration using 4PL if available
+                    if 'calibration' in self.norm_params and self.norm_params['calibration']:
+                        cal = self.norm_params['calibration']
+                        try:
+                            A, B, C, D = cal['A'], cal['B'], cal['C'], cal['D']
+                            # Inverse 4PL
+                            if test_intensity > A and test_intensity < D:
+                                ratio = (A - D) / (test_intensity - D) - 1
+                                if ratio > 0:
+                                    conc = C * (ratio ** (1 / B))
+                                    result['estimated_concentration'] = round(min(conc, 100.0), 3)
+                        except:
+                            pass
+                
+                return result
+            except Exception as e:
+                print(f"⚠️  Params fallback error: {e}")
+        
+        # Ultimate fallback: Simple threshold
+        if ai_prediction.lower() == 'negative':
+            result['normalized_intensity'] = 0.0
+            result['method'] = 'simple_threshold'
+        
+        return result
+
+# Global normalizer instance
+intensity_normalizer = None
+
+def load_normalizer():
+    """Load intensity normalizer on server startup."""
+    global intensity_normalizer
+    try:
+        intensity_normalizer = IntensityNormalizerWrapper()
+    except Exception as e:
+        print(f"⚠️  Failed to initialize normalizer: {e}")
+        intensity_normalizer = None
+
+
+# ============================================================================
 # Image Processing
 # ============================================================================
 
@@ -900,15 +1063,25 @@ def static_files(path):
     return send_from_directory('.', path)
 
 def load_model():
-    """Load model on server startup"""
-    global model_loader
+    """Load model and normalizer on server startup"""
+    global model_loader, intensity_normalizer
     
     try:
         model_loader = UniversalModelLoader(config.MODEL_PATH)
-        print("\n✅ Server ready to serve predictions\n")
+        print("✅ AI model loaded successfully")
     except Exception as e:
         print(f"\n❌ Failed to load model: {e}\n")
         sys.exit(1)
+    
+    # Load intensity normalizer
+    try:
+        intensity_normalizer = IntensityNormalizerWrapper()
+        print("✅ Intensity normalizer loaded successfully")
+    except Exception as e:
+        print(f"⚠️  Failed to load normalizer: {e}")
+        intensity_normalizer = None
+    
+    print("\n✅ Server ready to serve predictions\n")
 
 @app.route('/health', methods=['GET'])
 def health_check():
@@ -1084,6 +1257,26 @@ def predict():
         
         print(f"   Decision: {diagnosis} (method: {decision_method})")
         
+        # --- STEP 4: INTENSITY NORMALIZATION ---
+        # Apply normalization to get calibrated intensity values (matches final_inference.py)
+        normalized_data = {
+            'normalized_intensity': quantitative_data['test_intensity'],
+            'estimated_concentration': None,
+            'normalization_applied': False,
+            'method': 'none'
+        }
+        
+        if intensity_normalizer is not None:
+            normalized_data = intensity_normalizer.normalize(
+                test_intensity=quantitative_data['test_intensity'],
+                control_intensity=quantitative_data['control_intensity'],
+                ai_prediction=diagnosis,
+                ai_confidence=ai_score
+            )
+            print(f"   Normalization: raw={quantitative_data['test_intensity']:.2f} -> normalized={normalized_data['normalized_intensity']:.2f}, method={normalized_data['method']}")
+        else:
+            print("   ⚠️  Normalizer not loaded - using raw intensity values")
+        
         # Calculate processing time
         processing_time = (time.time() - start_time) * 1000  # ms
         
@@ -1091,7 +1284,7 @@ def predict():
         if used_temp_file and os.path.exists(TEMP_CROP_PATH):
             os.remove(TEMP_CROP_PATH)
         
-        # Build response matching final_inference.py output
+        # Build response matching final_inference.py output EXACTLY
         response = {
             'success': True,
             
@@ -1108,8 +1301,17 @@ def predict():
             # Quantitative data (matching final_inference.py format exactly)
             'quantitative_data': {
                 'control_line': f"{quantitative_data['control_intensity']:.2f}",
-                'test_line': f"{quantitative_data['test_intensity']:.2f}",
-                'ratio_tc': f"{quantitative_data.get('ratio', 0):.4f}"
+                'test_line': f"{quantitative_data['test_intensity']:.2f}",  # Backward compatibility
+                'test_line_raw': f"{quantitative_data['test_intensity']:.2f}",
+                'test_line_normalized': f"{normalized_data['normalized_intensity']:.2f}",
+                'ratio_tc': f"{quantitative_data.get('ratio', 0):.4f}",
+                'estimated_concentration_ng_ml': normalized_data['estimated_concentration']
+            },
+            
+            # Normalization info
+            'normalization': {
+                'applied': normalized_data['normalization_applied'],
+                'method': normalized_data['method']
             },
             
             # Backward compatibility fields

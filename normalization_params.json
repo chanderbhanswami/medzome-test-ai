@@ -1,0 +1,49 @@
+{
+  "version": "1.0",
+  "created": "2025-11-28T15:56:19.512834",
+  "thresholds": {
+    "negative_intensity_threshold": 15.183288580199951,
+    "tc_ratio_threshold": 0.09717914958047268,
+    "baseline": 12.377885406564634
+  },
+  "negative_stats": {
+    "mean": 12.377885406564634,
+    "std": 1.4027015868176589
+  },
+  "calibration": {
+    "A": 18.24684247500832,
+    "B": 3.4376034481726925,
+    "C": 3.1730966734202934,
+    "D": 128.3276040391081
+  },
+  "calibration_r2": 0.9910455556499365,
+  "normalization_scale": 129.82211459343534,
+  "stats": {
+    "negative": {
+      "mean_intensity": 12.377885406564634,
+      "std_intensity": 1.4027015868176589,
+      "threshold": 15.183288580199951,
+      "mean_tc_ratio": 0.0789269886926105,
+      "std_tc_ratio": 0.009126080443931086,
+      "count": 263
+    },
+    "positive": {
+      "min_intensity": 1.523809523809526,
+      "max_intensity": 142.2,
+      "mean_intensity": 53.26290749228285,
+      "count": 650
+    },
+    "calibration": {
+      "fitted": true,
+      "r2": 0.9910455556499365,
+      "params": {
+        "A": 18.24684247500832,
+        "B": 3.4376034481726925,
+        "C": 3.1730966734202934,
+        "D": 128.3276040391081
+      }
+    },
+    "classification_accuracy": 0.9759036144578314,
+    "fitted_date": "2025-11-28T15:56:19.510828"
+  }
+}
