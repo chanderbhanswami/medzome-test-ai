@@ -320,11 +320,16 @@ medzome_test_ai/
 ├── requirements.txt          # Python dependencies
 ├── medzome_final_model.keras # AI model
 ├── medzome_mvp_model.tflite  # AI model
+├── intensity_normalizer.pkl  # normalizer model
+├── intensity_normalizer.py   # normalizer script
+├── normalization_params.json # normalizer params file
+├── lfa_quantifier.py         # quantifier script
 ├── render.yaml               # render blueprint deployment
 ├── logo.png                  # Branding/logo (header and favicon)
 ├── medzome_ui.png            # UI screenshot
 ├── .gitignore                # git ignore file
 ├── LICENCE                   # Licence
+├── README_HF.md              # Readme for huggingface
 └── README.md                 # This file
 ```
 
