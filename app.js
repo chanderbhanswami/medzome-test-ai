@@ -671,14 +671,14 @@ function displayResults(result) {
         : '✗ Not Detected';
     elements.controlLine.className = controlLineValue > 0 ? 'detail-value text-success' : 'detail-value text-danger';
     
-    // Test line display: show normalized value only
-    // If normalized to 0 (negative), show just 0.00% in green
-    // If positive with value, show the normalized percentage in red
+    // Test line display: show normalized value only (without % sign)
+    // If normalized to 0 (negative), show just 0.00 in green
+    // If positive with value, show the normalized value in red
     if (testLineNormalized === 0 || testLineNormalized < 0.01) {
-        elements.testLine.textContent = '0.00%';
+        elements.testLine.textContent = '0.00';
         elements.testLine.className = 'detail-value text-success';  // Green for negative/no line
     } else {
-        elements.testLine.textContent = `${testLineNormalized.toFixed(2)}%`;
+        elements.testLine.textContent = testLineNormalized.toFixed(2);
         elements.testLine.className = 'detail-value text-danger';  // Red for positive
     }
     
@@ -952,30 +952,36 @@ function loadHistory() {
         return;
     }
     
-    elements.historyList.innerHTML = history.map(item => `
-        <div class="history-item" onclick="viewHistoryItem(${item.id})">
-            <img src="${item.imageData}" alt="Test strip" class="history-thumbnail">
-            <div class="history-details">
-                <div class="history-status ${item.isPositive ? 'positive' : 'negative'}">
-                    ${item.isPositive ? '🔴 POSITIVE' : '🟢 NEGATIVE'}
-                </div>
-                <div class="history-timestamp">
-                    ${new Date(item.timestamp).toLocaleString()}
-                </div>
-                <div class="history-metrics">
-                    <span class="history-metric">
-                        <i class="bi bi-speedometer2"></i> ${(item.confidence * 100).toFixed(1)}%
-                    </span>
-                    <span class="history-metric">
-                        <i class="bi bi-brightness-high"></i> ${item.intensity.toFixed(1)}%
-                    </span>
-                    <span class="history-metric">
-                        <i class="bi bi-stopwatch"></i> ${item.processingTime.toFixed(0)}ms
-                    </span>
+    elements.historyList.innerHTML = history.map(item => {
+        // Get quantitative data from saved result
+        const quantData = item.result?.quantitative_data || {};
+        const controlLineValue = parseFloat(quantData.control_line) || 0;
+        const testLineNormalized = quantData.test_line_normalized !== undefined 
+            ? parseFloat(quantData.test_line_normalized) 
+            : (parseFloat(quantData.test_line_raw) || 0);
+        
+        return `
+            <div class="history-item" onclick="viewHistoryItem(${item.id})">
+                <img src="${item.imageData}" alt="Test strip" class="history-thumbnail">
+                <div class="history-details">
+                    <div class="history-status ${item.isPositive ? 'positive' : 'negative'}">
+                        ${item.isPositive ? '🔴 POSITIVE' : '🟢 NEGATIVE'}
+                    </div>
+                    <div class="history-timestamp">
+                        ${new Date(item.timestamp).toLocaleString()}
+                    </div>
+                    <div class="history-metrics">
+                        <span class="history-metric">
+                            <i class="bi bi-activity"></i> C: ${controlLineValue.toFixed(2)}
+                        </span>
+                        <span class="history-metric">
+                            <i class="bi bi-bar-chart"></i> T: ${testLineNormalized.toFixed(2)}
+                        </span>
+                    </div>
                 </div>
             </div>
-        </div>
-    `).join('');
+        `;
+    }).join('');
 }
 
 function viewHistoryItem(id) {
@@ -1108,12 +1114,9 @@ function downloadReport() {
                 ['Image Name:', currentImageName || 'Unknown'],
                 ['Decision Method:', formatDecisionMethod(decisionMethod).replace(/[✓🔍📊⚖️🤖]/g, '').trim()],
                 ['Input Type:', inputType],
-                ['AI Confidence:', `${(analysisResults.confidence * 100).toFixed(1)}%`],
                 ['Control Line:', controlLineValue > 0 ? `${controlLineValue.toFixed(2)} intensity` : 'Not Detected'],
-                ['Test Line:', `${testLineNormalized.toFixed(2)}%`],
+                ['Test Line:', testLineNormalized.toFixed(2)],
                 ['T/C Ratio:', ratioTC.toFixed(4)],
-                ['Processing Time:', `${(analysisResults.processing_time_ms || 0).toFixed(0)} ms`],
-                ['Image Quality:', analysisResults.quality || assessImageQuality(analysisResults)],
                 ['Test Date:', new Date().toLocaleString()]
             ];
             
@@ -1413,14 +1416,14 @@ function showResultsModal(result, imageData, imageName) {
             ? `✓ ${controlLineValue.toFixed(2)} intensity` 
             : 'Not Detected';
         
-        // Test line display: show normalized value only
-        // If normalized to 0 (negative), show just 0.00% in green
-        // If positive with value, show the normalized percentage
+        // Test line display: show normalized value only (without % sign)
+        // If normalized to 0 (negative), show just 0.00 in green
+        // If positive with value, show the normalized value
         if (testLineNormalized === 0 || testLineNormalized < 0.01) {
-            elements.modalTestLine.textContent = '0.00%';
+            elements.modalTestLine.textContent = '0.00';
             elements.modalTestLine.className = 'detail-value text-success';  // Green for negative/no line
         } else {
-            elements.modalTestLine.textContent = `${testLineNormalized.toFixed(2)}%`;
+            elements.modalTestLine.textContent = testLineNormalized.toFixed(2);
             elements.modalTestLine.className = 'detail-value text-danger';  // Red for positive
         }
         
