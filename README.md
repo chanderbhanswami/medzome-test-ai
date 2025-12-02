@@ -316,6 +316,7 @@ medzome_test_ai/
 ├── test_images/              # Test images directory
 │   ├── negative/             # Negative test images
 │   └── positive/             # Positive test images
+├── test_images.zip           # Test images zip file
 ├── index.html                # Main web interface
 ├── styles.css                # UI/UX and responsive styles
 ├── app.js                    # Frontend logic, API calls, UI state
