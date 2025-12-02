@@ -28,10 +28,6 @@ logs/
 .DS_Store
 Thumbs.db
 
-# Large files (if you have others)
-*.zip
-*.tar.gz
-
 # Training data (if you don't want to commit)
 data/images/
 data/masks/
