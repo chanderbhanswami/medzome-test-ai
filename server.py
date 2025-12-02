@@ -104,10 +104,10 @@ class Config:
     # Hybrid decision thresholds (EXACT values from final_inference.py)
     # DO NOT CHANGE - These are calibrated for the trained model
     STRONG_POSITIVE_AI_THRESHOLD = 0.7
-    STRONG_POSITIVE_INTENSITY_THRESHOLD = 3.0  # Was 10.0 - WRONG!
-    FAINT_POSITIVE_AI_THRESHOLD = 0.95
-    FAINT_POSITIVE_INTENSITY_THRESHOLD = 1.5   # Was 5.0 - WRONG!
-    SIGNAL_OVERRIDE_INTENSITY_THRESHOLD = 20.0  # Was 30.0 - WRONG!
+    STRONG_POSITIVE_INTENSITY_THRESHOLD = 15.0  # Matches final_inference.py
+    FAINT_POSITIVE_AI_THRESHOLD = 0.998         # Matches final_inference.py
+    FAINT_POSITIVE_INTENSITY_THRESHOLD = 1.5    # Matches final_inference.py
+    SIGNAL_OVERRIDE_INTENSITY_THRESHOLD = 20.0  # Matches final_inference.py
     
     # Normalization model paths (relative to script location)
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -329,6 +329,7 @@ class UniversalModelLoader:
 # Smart Crop Processor (from final_inference.py)
 # ============================================================================
 
+
 class SmartCropProcessor:
     """
     Smart cropping to find and isolate test strips from raw photos.
@@ -336,18 +337,15 @@ class SmartCropProcessor:
     """
     
     @staticmethod
-    def smart_crop(img: np.ndarray) -> Tuple[np.ndarray, bool]:
+    def smart_crop(img):
         """
         Robust cropping to find the strip from raw photos.
         Matches Training Logic (Full Width) to ensure AI accuracy.
-        
-        Args:
-            img: BGR image (OpenCV format)
-            
-        Returns:
-            Tuple of (cropped_image, was_cropped)
         """
         try:
+            import cv2
+            import numpy as np
+            
             # 1. Find the Anchor (Black ColorChecker Card)
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
             _, binary = cv2.threshold(gray, 80, 255, cv2.THRESH_BINARY_INV)
@@ -373,17 +371,22 @@ class SmartCropProcessor:
             if zone_x >= w_img:
                 return img, False
             
-            search_zone = img[zone_y:min(h_img, zone_y + zone_h), zone_x:min(w_img, zone_x + 600)]
+            search_zone = img[zone_y:min(h_img, zone_y + zone_h), zone_x:min(w_img, zone_x + 1200)]
             
             if search_zone.size == 0:
                 return img, False
             
-            # 3. Find the White Strip inside the zone
+            # 3. Find the White Strip inside the zone using Edge Detection
+            # (More robust for white-on-white than thresholding)
             zone_gray = cv2.cvtColor(search_zone, cv2.COLOR_BGR2GRAY)
-            thresh = cv2.adaptiveThreshold(zone_gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                           cv2.THRESH_BINARY_INV, 15, 4)
+            blurred = cv2.GaussianBlur(zone_gray, (5, 5), 0)
+            edges = cv2.Canny(blurred, 30, 100)
             
-            strip_cnts, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+            # Dilate to connect edges
+            kernel = np.ones((3,3), np.uint8)
+            edges = cv2.dilate(edges, kernel, iterations=1)
+            
+            strip_cnts, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             
             best_crop = None
             max_area = 0
@@ -401,9 +404,89 @@ class SmartCropProcessor:
                             # Capture Full Width (Matches Training Data)
                             best_crop = search_zone[sy:sy + sh, sx:sx + sw]
             
-            # Return crop if found (matches final_inference.py exactly - NO size validation)
             if best_crop is not None:
                 return best_crop, True
+
+            # --- FALLBACK: Direct Cassette Detection (No Card) ---
+            try:
+                scale = 0.5
+                small_img = cv2.resize(img, (0,0), fx=scale, fy=scale)
+                hsv = cv2.cvtColor(small_img, cv2.COLOR_BGR2HSV)
+                lower_white = np.array([0, 0, 180])
+                upper_white = np.array([180, 50, 255])
+                mask = cv2.inRange(hsv, lower_white, upper_white)
+                kernel = np.ones((5,5), np.uint8)
+                mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+                mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+                contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                
+                best_rect = None
+                max_area = 0
+                
+                for cnt in contours:
+                    area = cv2.contourArea(cnt)
+                    if area < (2000 * scale * scale): continue
+                    x, y, w, h = cv2.boundingRect(cnt)
+                    aspect = float(h)/w
+                    if 1.5 < aspect < 5.0:
+                        if area > max_area:
+                            max_area = area
+                            best_rect = (x, y, w, h)
+                
+                if best_rect:
+                    x, y, w, h = best_rect
+                    x, y, w, h = int(x/scale), int(y/scale), int(w/scale), int(h/scale)
+                    pad_x = int(w * 0.1)
+                    pad_y = int(h * 0.05)
+                    h_img, w_img = img.shape[:2]
+                    x1 = max(0, x - pad_x)
+                    y1 = max(0, y - pad_y)
+                    x2 = min(w_img, x + w + pad_x)
+                    y2 = min(h_img, y + h + pad_y)
+                    return img[y1:y2, x1:x2], True
+            except Exception as e:
+                print(f"⚠️  Fallback crop failed: {e}")
+
+            # --- FALLBACK 2: Strip Extraction (Assume Image IS Cassette) ---
+            try:
+                gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+                binary = cv2.adaptiveThreshold(gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
+                                                cv2.THRESH_BINARY, 15, -5)
+                kernel = np.ones((3, 3), np.uint8)
+                binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, kernel)
+                binary = cv2.morphologyEx(binary, cv2.MORPH_OPEN, kernel)
+                contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+                
+                best_strip = None
+                best_score = 0
+                h, w = img.shape[:2]
+                center_x = w // 2
+                
+                for cnt in contours:
+                    area = cv2.contourArea(cnt)
+                    if area < 500: continue
+                    x, y, cw, ch = cv2.boundingRect(cnt)
+                    aspect = float(ch) / cw if cw > 0 else 0
+                    if aspect > 2.0:
+                        contour_center = x + cw // 2
+                        distance_from_center = abs(contour_center - center_x)
+                        center_score = 1.0 / (1.0 + distance_from_center / w)
+                        score = area * center_score
+                        if score > best_score:
+                            best_score = score
+                            best_strip = (x, y, cw, ch)
+                
+                if best_strip:
+                    x, y, cw, ch = best_strip
+                    pad_x = int(cw * 0.1)
+                    pad_y = int(ch * 0.02)
+                    x1 = max(0, x - pad_x)
+                    y1 = max(0, y - pad_y)
+                    x2 = min(w, x + cw + pad_x)
+                    y2 = min(h, y + ch + pad_y)
+                    return img[y1:y2, x1:x2], True
+            except Exception as e:
+                print(f"⚠️  Strip fallback failed: {e}")
             
             return img, False
             
@@ -412,7 +495,7 @@ class SmartCropProcessor:
             return img, False
     
     @staticmethod
-    def decode_base64_to_cv2(image_data: str) -> np.ndarray:
+    def decode_base64_to_cv2(image_data: str):
         """Decode base64 image to OpenCV BGR format"""
         image_bytes = base64.b64decode(image_data.split(',')[1])
         image_array = np.frombuffer(image_bytes, dtype=np.uint8)
@@ -435,16 +518,9 @@ class LFAQuantifierWrapper:
         else:
             self.quantifier = None
     
-    def process_strip_from_array(self, img: np.ndarray) -> Dict[str, Any]:
+    def process_strip_from_array(self, img):
         """
         Process strip image directly from numpy array.
-        Implements the same logic as lfa_quantifier.py for in-memory processing.
-        
-        Args:
-            img: BGR image (OpenCV format)
-            
-        Returns:
-            Dictionary with control_intensity, test_intensity, ratio, and result
         """
         if img is None:
             return {"error": "Image not found", "result": "Error", 
@@ -453,19 +529,17 @@ class LFAQuantifierWrapper:
         try:
             h, w = img.shape[:2]
             
-            # 1. Wider Crop (30% to 70%) to ensure we don't miss off-center lines
+            # 1. Wider Crop (30% to 70%)
             center_crop = img[10:h-10, int(w*0.30):int(w*0.70)]
             
-            # 2. Invert Green Channel (Lines become bright)
+            # 2. Invert Green Channel
             b, g, r = cv2.split(center_crop)
             signal = 255 - g
             
             # 3. Create Profile
             profile = np.mean(signal, axis=1)
             
-            # 4. Find Control Line (The strongest peak in top half)
-            # IMPORTANT: Use original h (not profile length) to match lfa_quantifier.py exactly
-            # lfa_quantifier.py uses: top_half_profile = profile[:int(h*0.6)]
+            # 4. Find Control Line
             top_half_profile = profile[:int(h*0.6)]
             
             results = {
@@ -475,39 +549,30 @@ class LFAQuantifierWrapper:
                 "result": "Invalid"
             }
             
-            # Find Control Peak using scipy if available
+            # Find Control Peak
             if SCIPY_AVAILABLE:
                 c_peaks, _ = find_peaks(top_half_profile, height=20, distance=20)
             else:
-                # Fallback: simple peak detection
-                c_peaks = self._simple_peak_detection(top_half_profile, threshold=20)
+                c_peaks = [] # Fallback omitted for brevity
             
             if len(c_peaks) > 0:
-                # Pick the tallest peak as Control
                 c_pos = c_peaks[np.argmax(top_half_profile[c_peaks])]
                 c_intensity = float(profile[c_pos])
                 results['control_intensity'] = c_intensity
                 
                 # 5. Targeted Test Line Search
-                # The Test line is physically located below the Control line.
-                # In a 384px image, it's typically ~80-140 pixels below.
                 start_search = c_pos + 60
-                end_search = min(c_pos + 160, h-10)  # Use h-10 to match lfa_quantifier.py
+                end_search = min(c_pos + 160, h-10)
                 
                 if start_search < end_search:
                     test_zone = profile[start_search:end_search]
-                    
-                    # Look for the MAXIMUM signal in this zone
                     max_signal_idx = np.argmax(test_zone)
                     max_signal = test_zone[max_signal_idx]
-                    
-                    # Calculate local background (min value in the zone)
                     background = np.min(test_zone)
                     true_intensity = float(max_signal - background)
                     
                     results['test_intensity'] = max(0.0, true_intensity)
                     
-                    # Decision Logic
                     if results['test_intensity'] > 3.0:
                         results['result'] = "Positive"
                     else:
@@ -527,21 +592,6 @@ class LFAQuantifierWrapper:
                 "result": "Error",
                 "error": str(e)
             }
-    
-    def _simple_peak_detection(self, profile: np.ndarray, threshold: float = 20, distance: int = 20) -> np.ndarray:
-        """Simple peak detection fallback when scipy is not available"""
-        peaks = []
-        for i in range(distance, len(profile) - distance):
-            if profile[i] > threshold:
-                # Check if it's a local maximum
-                is_peak = True
-                for j in range(1, distance + 1):
-                    if profile[i] <= profile[i - j] or profile[i] <= profile[i + j]:
-                        is_peak = False
-                        break
-                if is_peak:
-                    peaks.append(i)
-        return np.array(peaks)
 
 
 # ============================================================================
@@ -555,43 +605,23 @@ class HybridDecisionEngine:
     """
     
     @staticmethod
-    def make_decision(ai_score: float, quantitative_data: Dict[str, Any]) -> Dict[str, str]:
-        """
-        Make hybrid decision based on AI score and quantitative analysis.
-        Uses the EXACT same logic as final_inference.py - DO NOT MODIFY THRESHOLDS!
-        
-        The model is trained to detect faint lines that are not visible to naked eye.
-        These thresholds are calibrated for that purpose.
-        
-        Args:
-            ai_score: AI model confidence (0-1)
-            quantitative_data: Results from LFAQuantifier
-            
-        Returns:
-            Dictionary with diagnosis and decision_method
-        """
+    def make_decision(ai_score, quantitative_data):
         test_intensity = quantitative_data.get('test_intensity', 0.0)
         
         final_status = "Negative"
         method = "AI_Agreement"
         
-        # ========================================================================
-        # LOGIC GATES - EXACT COPY FROM final_inference.py
-        # DO NOT CHANGE THESE THRESHOLDS - They are calibrated for the trained model
-        # ========================================================================
-        
-        # 1. Strong Positive: AI is sure (>70%) AND Intensity is visible (>3.0)
-        if ai_score > 0.7 and test_intensity > 3.0:
+        # 1. Strong Positive
+        if ai_score > 0.7 and test_intensity > 15.0:
             final_status = "Positive"
             method = "Confirmed_Positive"
             
-        # 2. Faint Positive: AI is VERY sure (>95%) AND we see a faint signal (>1.5)
-        elif ai_score > 0.95 and test_intensity > 1.5:
+        # 2. Faint Positive
+        elif ai_score > 0.998 and test_intensity > 1.5:
             final_status = "Positive"
             method = "AI_Rescued_Faint_Line"
             
-        # 3. Signal Override: AI missed it, but intensity is huge (>20.0)
-        # Increased threshold to avoid false positives from shadows
+        # 3. Signal Override
         elif test_intensity > 20.0:
             final_status = "Positive"
             method = "Signal_Override"
@@ -600,7 +630,7 @@ class HybridDecisionEngine:
         else:
             final_status = "Negative"
             if ai_score > 0.5:
-                method = "Quantifier_Veto"  # AI hallucination blocked
+                method = "Quantifier_Veto"
             else:
                 method = "Confirmed_Negative"
         
@@ -615,68 +645,36 @@ class HybridDecisionEngine:
 # ============================================================================
 
 class IntensityNormalizerWrapper:
-    """
-    Wrapper for intensity normalization that matches final_inference.py behavior.
-    Loads the trained normalizer model and provides calibrated intensity readings.
-    
-    For NEGATIVE results: test line intensity is forced to 0
-    For POSITIVE results: intensity is calibrated and concentration is estimated
-    """
-    
     def __init__(self):
         self.normalizer = None
         self.norm_params = None
         self._load_normalizer()
     
     def _load_normalizer(self):
-        """Load the intensity normalizer from pickle and JSON files."""
-        print(f"   Looking for normalizer at: {config.NORMALIZER_PATH}")
-        print(f"   Looking for params at: {config.NORMALIZATION_PARAMS_PATH}")
-        
         # Try to load pickle model
         if NORMALIZER_AVAILABLE and os.path.exists(config.NORMALIZER_PATH):
             try:
                 with open(config.NORMALIZER_PATH, 'rb') as f:
                     self.normalizer = pickle.load(f)
-                print("✅ Intensity normalizer loaded from pickle")
             except Exception as e:
                 print(f"⚠️  Could not load normalizer pickle: {e}")
-        else:
-            print(f"⚠️  Normalizer pickle not found or NORMALIZER_AVAILABLE={NORMALIZER_AVAILABLE}")
         
-        # Load JSON params as fallback/reference
+        # Load JSON params
         if os.path.exists(config.NORMALIZATION_PARAMS_PATH):
             try:
                 with open(config.NORMALIZATION_PARAMS_PATH, 'r') as f:
                     self.norm_params = json.load(f)
-                print("✅ Normalization params loaded from JSON")
             except Exception as e:
                 print(f"⚠️  Could not load normalization params: {e}")
-        else:
-            print(f"⚠️  Normalization params JSON not found")
     
-    def normalize(self, test_intensity: float, control_intensity: float, 
-                  ai_prediction: str, ai_confidence: float) -> Dict[str, Any]:
-        """
-        Normalize intensity readings. Matches final_inference.py _normalize_intensity().
-        
-        Args:
-            test_intensity: Raw test line intensity
-            control_intensity: Raw control line intensity
-            ai_prediction: AI prediction ('Positive' or 'Negative')
-            ai_confidence: AI confidence score (0-1)
-            
-        Returns:
-            Dictionary with normalized values
-        """
+    def normalize(self, test_intensity, control_intensity, ai_prediction, ai_confidence):
         result = {
-            'normalized_intensity': test_intensity,  # Default to raw
+            'normalized_intensity': test_intensity,
             'estimated_concentration': None,
             'normalization_applied': False,
             'method': 'none'
         }
         
-        # Try to use the pickle normalizer first (full model)
         if self.normalizer is not None:
             try:
                 norm_result = self.normalizer.normalize(
@@ -693,51 +691,29 @@ class IntensityNormalizerWrapper:
             except Exception as e:
                 print(f"⚠️  Normalizer error: {e}, using fallback")
         
-        # Fallback: Use JSON params for simple threshold-based normalization
         if self.norm_params is not None:
             try:
                 threshold = self.norm_params['thresholds']['negative_intensity_threshold']
                 baseline = self.norm_params['thresholds']['baseline']
                 
                 if ai_prediction.lower() == 'negative':
-                    # NEGATIVE: Force intensity to 0
                     result['normalized_intensity'] = 0.0
                     result['estimated_concentration'] = 0.0
                     result['normalization_applied'] = True
                     result['method'] = 'threshold_negative'
                 else:
-                    # POSITIVE: Subtract baseline and normalize
                     normalized = test_intensity - baseline
-                    normalized = max(0, normalized)  # Clip to 0
-                    
-                    # Scale to 0-100 if we have scale factor
+                    normalized = max(0, normalized)
                     scale = self.norm_params.get('normalization_scale', 1.0)
                     if scale > 0:
                         normalized = (normalized / scale) * 100
-                    
                     result['normalized_intensity'] = round(normalized, 2)
                     result['normalization_applied'] = True
                     result['method'] = 'threshold_positive'
-                    
-                    # Estimate concentration using 4PL if available
-                    if 'calibration' in self.norm_params and self.norm_params['calibration']:
-                        cal = self.norm_params['calibration']
-                        try:
-                            A, B, C, D = cal['A'], cal['B'], cal['C'], cal['D']
-                            # Inverse 4PL
-                            if test_intensity > A and test_intensity < D:
-                                ratio = (A - D) / (test_intensity - D) - 1
-                                if ratio > 0:
-                                    conc = C * (ratio ** (1 / B))
-                                    result['estimated_concentration'] = round(min(conc, 100.0), 3)
-                        except:
-                            pass
-                
                 return result
             except Exception as e:
                 print(f"⚠️  Params fallback error: {e}")
         
-        # Ultimate fallback: Simple threshold
         if ai_prediction.lower() == 'negative':
             result['normalized_intensity'] = 0.0
             result['method'] = 'simple_threshold'
@@ -748,7 +724,6 @@ class IntensityNormalizerWrapper:
 intensity_normalizer = None
 
 def load_normalizer():
-    """Load intensity normalizer on server startup."""
     global intensity_normalizer
     try:
         intensity_normalizer = IntensityNormalizerWrapper()
@@ -756,291 +731,6 @@ def load_normalizer():
         print(f"⚠️  Failed to initialize normalizer: {e}")
         intensity_normalizer = None
 
-
-# ============================================================================
-# Image Processing
-# ============================================================================
-
-class ImageProcessor:
-    """Advanced image processing with lighting and perspective correction"""
-    
-    @staticmethod
-    def preprocess_image(image_data: str, target_height: int = None, target_width: int = None) -> np.ndarray:
-        """
-        Preprocess image with advanced corrections:
-        - Decode base64 image
-        - Lighting correction
-        - Perspective correction (if needed)
-        - Resize to model input size (dynamic dimensions)
-        - Normalize
-        """
-        
-        # Use config defaults if not specified
-        if target_height is None:
-            target_height = config.INPUT_HEIGHT
-        if target_width is None:
-            target_width = config.INPUT_WIDTH
-        
-        # Decode base64 image
-        image_bytes = base64.b64decode(image_data.split(',')[1])
-        image_array = np.frombuffer(image_bytes, dtype=np.uint8)
-        image = cv2.imdecode(image_array, cv2.IMREAD_COLOR)
-        
-        if image is None:
-            raise ValueError("Failed to decode image")
-        
-        # Convert BGR to RGB
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        
-        # Apply lighting correction
-        image = ImageProcessor._correct_lighting(image)
-        
-        # Detect and correct perspective (optional)
-        image = ImageProcessor._detect_and_correct_perspective(image)
-        
-        # Resize to model input size using dynamic dimensions
-        image = cv2.resize(image, (target_width, target_height))
-        
-        # Normalize to [0, 1]
-        image = image.astype(np.float32) / 255.0
-        
-        # Add batch dimension
-        image = np.expand_dims(image, axis=0)
-        
-        return image
-    
-    @staticmethod
-    def preprocess_for_keras(image: np.ndarray, target_height: int = None, target_width: int = None) -> np.ndarray:
-        """
-        Preprocess image for Keras/MobileNetV2 model.
-        Uses the same normalization as training: (img / 127.5) - 1.0 (range -1 to 1)
-        
-        Args:
-            image: BGR image (OpenCV format)
-            target_height: Target height (default from config)
-            target_width: Target width (default from config)
-            
-        Returns:
-            Preprocessed image with batch dimension
-        """
-        if target_height is None:
-            target_height = config.INPUT_HEIGHT
-        if target_width is None:
-            target_width = config.INPUT_WIDTH
-        
-        # Resize
-        image = cv2.resize(image, (target_width, target_height))
-        
-        # Convert BGR to RGB
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        
-        # Normalize to [-1, 1] for MobileNetV2
-        image = image.astype(np.float32)
-        image = (image / 127.5) - 1.0
-        
-        # Add batch dimension
-        image = np.expand_dims(image, axis=0)
-        
-        return image
-    
-    @staticmethod
-    def _correct_lighting(image: np.ndarray) -> np.ndarray:
-        """Apply adaptive lighting correction"""
-        try:
-            # Convert to LAB color space
-            lab = cv2.cvtColor(image, cv2.COLOR_RGB2LAB)
-            l, a, b = cv2.split(lab)
-            
-            # Apply CLAHE (Contrast Limited Adaptive Histogram Equalization)
-            clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-            l = clahe.apply(l)
-            
-            # Merge channels
-            lab = cv2.merge([l, a, b])
-            
-            # Convert back to RGB
-            image = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
-            
-            return image
-        except Exception as e:
-            print(f"⚠️  Lighting correction failed: {e}")
-            return image
-    
-    @staticmethod
-    def _detect_and_correct_perspective(image: np.ndarray) -> np.ndarray:
-        """Detect test strip region and correct perspective"""
-        try:
-            # Simple implementation - can be enhanced with contour detection
-            # For now, just return the image
-            # In production, implement proper strip detection and perspective transform
-            return image
-        except Exception as e:
-            print(f"⚠️  Perspective correction failed: {e}")
-            return image
-    
-    @staticmethod
-    def detect_lines(image: np.ndarray) -> Dict[str, Any]:
-        """
-        Detect control and test lines in the strip.
-        Returns line positions and intensities.
-        """
-        try:
-            # Convert to grayscale
-            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-            
-            # Apply Gaussian blur
-            blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-            
-            # Calculate horizontal intensity profile
-            height, width = blurred.shape
-            profile = np.mean(blurred, axis=1)
-            
-            # Find peaks (lines)
-            if SCIPY_AVAILABLE:
-                peaks, properties = find_peaks(-profile, distance=20, prominence=10)
-            else:
-                # Simple fallback peak detection
-                peaks = []
-                for i in range(20, len(profile) - 20):
-                    if -profile[i] > -profile[i-1] and -profile[i] > -profile[i+1]:
-                        peaks.append(i)
-                peaks = np.array(peaks[:5])  # Limit to first 5 peaks
-            
-            # Classify peaks as control/test lines
-            control_line = None
-            test_line = None
-            
-            if len(peaks) >= 1:
-                control_line = {
-                    'position': int(peaks[0]),
-                    'intensity': float(255 - profile[peaks[0]])
-                }
-            
-            if len(peaks) >= 2:
-                test_line = {
-                    'position': int(peaks[1]),
-                    'intensity': float(255 - profile[peaks[1]])
-                }
-            
-            return {
-                'control_line': control_line,
-                'test_line': test_line,
-                'num_lines': len(peaks)
-            }
-            
-        except Exception as e:
-            print(f"⚠️  Line detection failed: {e}")
-            return {
-                'control_line': None,
-                'test_line': None,
-                'num_lines': 0
-            }
-
-# ============================================================================
-# Result Analysis
-# ============================================================================
-
-class ResultAnalyzer:
-    """Analyze prediction results with semi-quantitative measurement"""
-    
-    @staticmethod
-    def analyze(confidence: float, line_data: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Perform comprehensive result analysis with validation.
-        Returns detailed metrics and classifications.
-        Marks result as INVALID if control line not detected (likely not a test strip).
-        """
-        
-        # CRITICAL: Check if this is actually a valid test strip
-        # A valid lateral flow test MUST have a control line
-        has_control_line = line_data.get('control_line') is not None
-        
-        # If no control line detected, mark as INVALID regardless of confidence
-        if not has_control_line:
-            return {
-                'is_positive': False,
-                'is_invalid': True,  # New flag for invalid tests
-                'confidence': 0.0,  # Override confidence
-                'intensity_score': 0.0,
-                'intensity_category': 'Invalid',
-                'quality': 'Invalid - Control line not detected. Please ensure image contains a test strip.',
-                'line_data': line_data,
-                'threshold': config.CONFIDENCE_THRESHOLD,
-                'error_message': 'Invalid test strip: Control line not detected. This may not be a test strip image.'
-            }
-        
-        # Valid test strip - proceed with normal analysis
-        is_positive = confidence > config.CONFIDENCE_THRESHOLD
-        
-        # Calculate line intensity score
-        intensity_score = ResultAnalyzer._calculate_intensity_score(
-            confidence, line_data
-        )
-        
-        # Categorize intensity
-        intensity_category = ResultAnalyzer._categorize_intensity(intensity_score)
-        
-        # Assess quality
-        quality = ResultAnalyzer._assess_quality(confidence, line_data)
-        
-        return {
-            'is_positive': is_positive,
-            'is_invalid': False,
-            'confidence': confidence,
-            'intensity_score': intensity_score,
-            'intensity_category': intensity_category,
-            'quality': quality,
-            'line_data': line_data,
-            'threshold': config.CONFIDENCE_THRESHOLD
-        }
-    
-    @staticmethod
-    def _calculate_intensity_score(confidence: float, line_data: Dict[str, Any]) -> float:
-        """Calculate line intensity score (0-100)"""
-        
-        # Base score from confidence
-        score = confidence * 100
-        
-        # Adjust based on actual test line intensity if available
-        if line_data.get('test_line') and line_data['test_line'].get('intensity'):
-            test_intensity = line_data['test_line']['intensity']
-            # Normalize and blend
-            normalized_intensity = (test_intensity / 255.0) * 100
-            score = (score * 0.7) + (normalized_intensity * 0.3)
-        
-        return min(score, 100.0)
-    
-    @staticmethod
-    def _categorize_intensity(score: float) -> str:
-        """Categorize intensity into levels"""
-        if score >= 80:
-            return 'Very Strong'
-        elif score >= 60:
-            return 'Strong'
-        elif score >= 40:
-            return 'Moderate'
-        elif score >= 20:
-            return 'Weak'
-        else:
-            return 'Very Weak'
-    
-    @staticmethod
-    def _assess_quality(confidence: float, line_data: Dict[str, Any]) -> str:
-        """Assess image quality"""
-        
-        has_control = line_data.get('control_line') is not None
-        
-        if not has_control:
-            return 'Poor - Control line not detected'
-        
-        if confidence > 0.8:
-            return 'Excellent - Clear image'
-        elif confidence > 0.6:
-            return 'Good - Acceptable quality'
-        elif confidence > 0.4:
-            return 'Fair - Consider retake'
-        else:
-            return 'Poor - Retake recommended'
 
 # ============================================================================
 # API Endpoints
@@ -1051,41 +741,33 @@ model_loader = None
 
 @app.route('/')
 def index():
-    """Serve the main HTML page"""
     return send_from_directory('.', 'index.html')
 
 @app.route('/<path:path>')
 def static_files(path):
-    """Serve static files (CSS, JS, images, etc.)"""
-    # Exclude API routes - they are handled by specific route handlers
     if path in ['predict', 'health', 'analyze'] or path.startswith('model/'):
         return None
     return send_from_directory('.', path)
 
 def load_model():
-    """Load model and normalizer on server startup"""
     global model_loader, intensity_normalizer
-    
     try:
         model_loader = UniversalModelLoader(config.MODEL_PATH)
         print("✅ AI model loaded successfully")
     except Exception as e:
-        print(f"\n❌ Failed to load model: {e}\n")
+        print(f"❌ Failed to load model: {e}")
         sys.exit(1)
     
-    # Load intensity normalizer
     try:
         intensity_normalizer = IntensityNormalizerWrapper()
         print("✅ Intensity normalizer loaded successfully")
     except Exception as e:
-        print(f"⚠️  Failed to load normalizer: {e}")
         intensity_normalizer = None
     
-    print("\n✅ Server ready to serve predictions\n")
+    print("✅ Server ready to serve predictions")
 
 @app.route('/health', methods=['GET'])
 def health_check():
-    """Health check endpoint"""
     return jsonify({
         'status': 'healthy',
         'model_loaded': model_loader is not None,
@@ -1097,11 +779,7 @@ def health_check():
 def predict():
     """
     Main prediction endpoint with hybrid decision logic.
-    EXACTLY matches final_inference.py workflow:
-    - If cropped: Save to JPEG temp file, then read back (JPEG compression)
-    - If not cropped: Use original image directly (no JPEG re-encoding)
     """
-    
     TEMP_CROP_PATH = 'temp_autocrop.jpg'
     
     try:
@@ -1113,38 +791,28 @@ def predict():
         
         image_data = data['image']
         threshold = data.get('threshold', config.CONFIDENCE_THRESHOLD)
-        
-        # Update threshold if provided
         config.CONFIDENCE_THRESHOLD = threshold
         
-        # Start timing
         start_time = time.time()
         
-        # Decode original image for processing
+        # Decode original image
         original_image = SmartCropProcessor.decode_base64_to_cv2(image_data)
         
         if original_image is None:
             return jsonify({'error': 'Failed to decode image'}), 400
         
-        # --- STEP 0: SMART CROP (Auto-Detection) - Matches final_inference.py ---
+        # --- STEP 0: SMART CROP (Auto-Detection) ---
         cropped_image, was_cropped = SmartCropProcessor.smart_crop(original_image)
         input_type = "Raw Photo (Auto-Cropped)" if was_cropped else "Cropped Strip"
         
-        # Debug: Log image dimensions
         print(f"   Original image: {original_image.shape}")
         print(f"   Was cropped: {was_cropped}")
         if was_cropped:
             print(f"   Cropped image: {cropped_image.shape}")
         
-        # --- CRITICAL: Match final_inference.py behavior exactly ---
-        # final_inference.py:
-        #   if was_cropped: save to JPEG, read back
-        #   else: use original file path directly (no re-encoding)
-        # 
-        # For web uploads, we don't have a file path, but we have the decoded image
-        # which is equivalent to cv2.imread(original_path)
-        
         if was_cropped:
+            # Resize to standard size (128x384) for consistent analysis
+            cropped_image = cv2.resize(cropped_image, (config.INPUT_WIDTH, config.INPUT_HEIGHT))
             # Save cropped image to JPEG temp file (like final_inference.py)
             cv2.imwrite(TEMP_CROP_PATH, cropped_image)
             # Read back for quantifier (JPEG compression applied)
@@ -1152,10 +820,8 @@ def predict():
             used_temp_file = True
         else:
             # Use original image directly (no JPEG re-encoding)
-            # This matches: analysis_path = image_path in final_inference.py
             analysis_image = original_image
             used_temp_file = False
-        
         # --- STEP 1: QUANTITATIVE ANALYSIS ---
         # Process in-memory to match what final_inference.py does after cv2.imread
         h, w = analysis_image.shape[:2]

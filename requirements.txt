@@ -1,19 +1,7 @@
-# Medzome - Lateral Flow Test Analysis
-# Python Backend Requirements
-
-# Core Dependencies
-flask==3.0.0
-numpy==1.26.4
-opencv-python-headless==4.8.1.78
-Pillow==10.1.0
-scipy==1.11.4
-
-# TensorFlow 2.16+ includes Keras 3 (required for .keras models)
-tensorflow==2.16.1
-
-# Production WSGI Server (required for Render)
-gunicorn==21.2.0
-
-# TFLite Runtime (lightweight alternative for TFLite-only)
-# Uncomment if you want to use TFLite runtime instead of full TensorFlow
-# tflite-runtime==2.14.0
+Flask==3.1.2
+gunicorn
+numpy>=1.26.0
+opencv-python-headless
+scipy>=1.10.0
+tensorflow
+Pillow
