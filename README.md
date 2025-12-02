@@ -314,8 +314,8 @@ Users can generate a professional PDF report for any result, including all metri
 medzome_test_ai/
 │
 ├── test_images/              # Test images directory
-│   ├── negative/
-│   └── positive
+│   ├── negative/             # Negative test images
+│   └── positive/             # Positive test images
 ├── index.html                # Main web interface
 ├── styles.css                # UI/UX and responsive styles
 ├── app.js                    # Frontend logic, API calls, UI state
